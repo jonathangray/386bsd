@@ -34,6 +34,13 @@
  * SUCH DAMAGE.
  *
  *	@(#)if_we.c	7.3 (Berkeley) 5/21/91
+ *
+ * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
+ * --------------------         -----   ----------------------
+ * CURRENT PATCH LEVEL:         1       00500
+ * --------------------         -----   ----------------------
+ *
+ * 09 Sep 92	Mike Durkin		Fix Danpex EW-2016 & other 8013 clones
  */
 
 /*
@@ -154,8 +161,14 @@ weprobe(is)
 	 */
 	for (sum = 0, i = 0; i < 8; ++i)
 	    sum += inb(is->id_iobase + WD_ROM_OFFSET + i);
-	if (sum != WD_CHECKSUM)
+	if (sum != WD_CHECKSUM) {		/* 09 Sep 92*/
+#ifdef WECOMPAT
+	    printf( "we: probe: checksum failed... installing anyway\n");
+	    printf( "we: Danpex EW-2016 or other 8013 clone card?\n");
+#else	/* !WECOMPAT*/
             return (0);
+#endif	/* !WECOMPAT*/
+	}
 	sc->we_type = inb(is->id_iobase + WD_ROM_OFFSET + 6);
 #ifdef nope
 	if ((sc->we_type & WD_REVMASK) != 2		/* WD8003E or WD8003S */

@@ -31,6 +31,14 @@
  * SUCH DAMAGE.
  *
  *	@(#)tcp_usrreq.c	7.15 (Berkeley) 6/28/90
+ *
+ * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
+ * --------------------         -----   ----------------------
+ * CURRENT PATCH LEVEL:         1       10000
+ * --------------------         -----   ----------------------
+ *
+ * 22 Feb 93	David Greenman		Increased tcp_sendspace and 
+ *					tcp_recvspace to 16k bytes
  */
 
 #include "param.h"
@@ -394,8 +402,8 @@ tcp_ctloutput(op, so, level, optname, mp)
 	return (error);
 }
 
-u_long	tcp_sendspace = 1024*4;
-u_long	tcp_recvspace = 1024*4;
+u_long	tcp_sendspace = 1024*16;
+u_long	tcp_recvspace = 1024*16;
 
 /*
  * Attach TCP protocol to socket, allocating

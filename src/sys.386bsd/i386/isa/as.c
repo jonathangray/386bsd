@@ -52,6 +52,14 @@
  * Please send patches and names other perpherials that work to
  * pace@blitz.com.  If you have trouble that you can't fix, please
  * wait for the next release before contacting me.
+ *
+ * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
+ * --------------------         -----   ----------------------
+ * CURRENT PATCH LEVEL:         1       00601
+ * --------------------         -----   ----------------------
+ *
+ * 23 Oct 92	Joerg Lohse		changed ccb opcode for compatibility
+ *					with Adaptec AHA-1542A
  */
 
 #include "as.h"
@@ -925,9 +933,9 @@ printf("total %d nblocks %d ", total, nblocks);
 	bzero ((caddr_t)ccb, sizeof *ccb); 
 
 	if (nscatter)
-		ccb->ccb_opcode = 4; /* scatter cmd, return resid */
+		ccb->ccb_opcode = 2; /* scatter cmd, return resid */
 	else
-		ccb->ccb_opcode = 3;
+		ccb->ccb_opcode = 0;
 	target = dev_target (bp->b_dev);
 	ccb->ccb_addr_and_control = target << 5;
 	if (bp->b_bcount != 0)
@@ -1237,11 +1245,13 @@ int val;
 		printf ("\n");
 	}
 
-	bp->b_resid = (ccb->ccb_data_len_msb << 16)
-		| (ccb->ccb_data_len_mid << 8)
-			| ccb->ccb_data_len_lsb;
-	if (bp != as->scsi_bp && bp->b_resid != 0)
-		printf ("scsi resid = %d\n", bp->b_resid);
+	/* this assignment mixed sizes of controller commands
+           and data to read/write.
+ 	bp->b_resid = (ccb->ccb_data_len_msb << 16)
+ 		| (ccb->ccb_data_len_mid << 8)
+ 			| ccb->ccb_data_len_lsb;
+        */
+	bp->b_resid = 0;
 
  next:
 	asdone (as, 1);

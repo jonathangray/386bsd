@@ -37,9 +37,11 @@
  *
  * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
  * --------------------         -----   ----------------------
- * CURRENT PATCH LEVEL:         2       00043
+ * CURRENT PATCH LEVEL:         3       00047
  * --------------------         -----   ----------------------
  *
+ * 20 Sep 92	Barry Lustig		WD8013 16 bit mode -- enable
+ *						with "option WD8013".
  * 19 Sep 92	Michael Galassi		Fixed multiboard routing
  * 09 Sep 92	Mike Durkin		Fix Danpex EW-2016 & other 8013 clones
  */
@@ -150,6 +152,13 @@ weprobe(is)
 	register struct we_softc *sc = &we_softc[is->id_unit];
 	union we_mem_sel wem;
 	u_char sum;
+#ifdef WD8013						/* 20 Sep 92*/
+	union we_laar laar;
+
+	laar.laar_byte = 0;
+#endif	/* WD8013*/
+
+	wem.ms_byte = 0;				/* 20 Sep 92*/
  
 	/* reset card to force it into a known state. */
 	outb(is->id_iobase, 0x80);
@@ -157,6 +166,15 @@ weprobe(is)
 	outb(is->id_iobase, 0x00);
 	/* wait in the case this card is reading it's EEROM */
 	DELAY(5000);
+
+#ifdef WD8013						/* 20 Sep 92*/
+	/* allow the NIC to access the shared RAM 16 bits at a time */
+
+	laar.addr_l19 = 1;
+	laar.lan_16_en = 1;
+	laar.mem_16_en = 1;
+	outb(is->id_iobase+5, laar.laar_byte);	/* Write a 0xc1 */
+#endif	/* WD8013*/
 
 	/*
 	 * Here we check the card ROM, if the checksum passes, and the
@@ -345,7 +363,12 @@ weinit(unit)
 	wecmd.cs_sta = 0;
 	wecmd.cs_ps = 0;
 	outb(sc->we_io_nic_addr + WD_P0_COMMAND, wecmd.cs_byte);
+#ifdef WD8013						/* 20 Sep 92*/
+	/* enable 16 bit access if 8013 card */
+	outb(sc->we_io_nic_addr + WD_P0_DCR, WD_D_CONFIG16);
+#else	/* !WD8013*/
 	outb(sc->we_io_nic_addr + WD_P0_DCR, WD_D_CONFIG);
+#endif	/* !WD8013*/
 	outb(sc->we_io_nic_addr + WD_P0_RBCR0, 0);
 	outb(sc->we_io_nic_addr + WD_P0_RBCR1, 0);
 	outb(sc->we_io_nic_addr + WD_P0_RCR, WD_R_MON);

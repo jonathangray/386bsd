@@ -37,9 +37,10 @@
  *
  * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
  * --------------------         -----   ----------------------
- * CURRENT PATCH LEVEL:         1       00020
+ * CURRENT PATCH LEVEL:         2       00043
  * --------------------         -----   ----------------------
  *
+ * 19 Sep 92	Michael Galassi		Fixed multiboard routing
  * 09 Sep 92	Mike Durkin		Fix Danpex EW-2016 & other 8013 clones
  */
 
@@ -47,6 +48,11 @@
  * Modification history
  *
  * 8/28/89 - Initial version(if_wd.c), Tim L Tucker
+ *
+ * 92.09.19 - Changes to allow multiple we interfaces in one box.
+ *          Allowed interupt handler to look at unit other than 0
+ *            Bdry was static, made it into an array w/ one entry per
+ *          interface.  nerd@percival.rain.com (Michael Galassi)
  */
  
 #include "we.h"
@@ -309,7 +315,7 @@ wewatchdog(unit) {
 	weinit(unit);
 }
 
-static Bdry;
+static Bdry[NWE];					/* 19 Sep 92*/
 /*
  * Initialization of interface (really just DS8390). 
  */
@@ -333,7 +339,7 @@ weinit(unit)
 	 * this is stock code...please see the National manual for details.
 	 */
 	s = splhigh();
-Bdry = 0;
+	Bdry[unit] = 0;					/* 19 Sep 92*/
 	wecmd.cs_byte = inb(sc->we_io_nic_addr + WD_P0_COMMAND);
 	wecmd.cs_stp = 1;
 	wecmd.cs_sta = 0;
@@ -442,8 +448,6 @@ weintr(unit)
 	union we_command wecmd;
 	union we_interrupt weisr;
 
-	unit =0;
- 
 	/* disable onboard interrupts, then get interrupt status */
 	wecmd.cs_byte = inb(sc->we_io_nic_addr + WD_P0_COMMAND);
 	wecmd.cs_ps = 0;
@@ -529,8 +533,8 @@ werint(unit)
 	wecmd.cs_ps = 1;
 	outb(sc->we_io_nic_addr + WD_P0_COMMAND, wecmd.cs_byte);
 	curr = inb(sc->we_io_nic_addr + WD_P1_CURR);
-if(Bdry)
-	bnry =Bdry;
+	if(Bdry[unit])					/* 19 Sep 92*/
+		bnry = Bdry[unit];
 
 	while (bnry != curr)
 	{
@@ -574,7 +578,7 @@ outofbufs:
 		outb(sc->we_io_nic_addr + WD_P0_COMMAND, wecmd.cs_byte);
 		curr = inb(sc->we_io_nic_addr + WD_P1_CURR);
 	}
-Bdry = bnry;
+	Bdry[unit] = bnry;				/* 19 Sep 92*/
 }
 
 /*

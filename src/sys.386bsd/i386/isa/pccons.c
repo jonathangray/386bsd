@@ -37,9 +37,10 @@
  *
  * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
  * --------------------         -----   ----------------------
- * CURRENT PATCH LEVEL:         2       00031
+ * CURRENT PATCH LEVEL:         3       00055
  * --------------------         -----   ----------------------
  *
+ * 11 Sep 92	Frank MacLachlan	CROCK for "hang after copyright" bug
  * 15 Aug 92	?			Patches for X server
  * 21 Aug 92    Frank Maclachlan        Fixed back-scroll system crash
  */
@@ -185,10 +186,12 @@ struct isa_device *dev;
 	outb(KBOUTP, CMDBYTE);
 
 	/* Start keyboard stuff RESET */
+	DELAY(1000);				/* 11 Sep 92 : !!CROCK!!*/
 	kbd_cmd(KBC_RESET);
 	while((c = inb(KBDATAP)) != KBR_ACK) {
 		if ((c == KBR_RESEND) ||  (c == KBR_OVERRUN)) {
 			if(!again)printf("KEYBOARD disconnected: RECONNECT \n");
+			DELAY(1000);		/* 11 Sep 92 : !!CROCK!!*/
 			kbd_cmd(KBC_RESET);
 			again = 1;
 		}

@@ -29,6 +29,14 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
+ * --------------------         -----   ----------------------
+ * CURRENT PATCH LEVEL:         1       00501
+ * --------------------         -----   ----------------------
+ *
+ * 06 Sep 92	Herb Peyerl		Added "aui"/"bnc" options to ifconfig
+ *						for 3COM 3C503 port selection
  */
 
 #ifndef lint
@@ -107,6 +115,8 @@ struct	cmd {
 	{ "-arp",	IFF_NOARP,	setifflags },
 	{ "debug",	IFF_DEBUG,	setifflags },
 	{ "-debug",	-IFF_DEBUG,	setifflags },
+	{ "aui",	IFF_LLC0,	setifflags },	/* 06 Sep 92*/
+	{ "bnc",	-IFF_LLC0,	setifflags },
 	{ "alias",	IFF_UP,		notealias },
 	{ "-alias",	-IFF_UP,	notealias },
 	{ "delete",	-IFF_UP,	notealias },

@@ -45,11 +45,12 @@
 #include "i386/isa/wdreg.h"
 #include "saio.h"
 
-#define	NWD		2	/* number of hard disk units supported, max 2 */
+#define SMALL
+#define	NWD		1	/* number of hard disk units supported, max 2 */
 #define	RETRIES		5	/* number of retries before giving up */
 
 int noretries, wdquiet;
-/*#define WDDEBUG*/
+/* #define WDDEBUG*/
 
 #ifdef	SMALL
 extern struct disklabel disklabel;
@@ -89,6 +90,7 @@ wdopen(io)
         if (wdinit(io))
                 _stop("wd initialization error");
 	io->i_boff = dd->d_partitions[io->i_part].p_offset ;
+/*printf("boff %d ", io->i_boff);*/
 	return(0);
 }
 
@@ -118,6 +120,7 @@ wdstrategy(io,func)
 	 * Note: doing the conversions this way limits the partition size
 	 * to about 8 million sectors (1-8 Gb).
 	 */
+/*printf("bn%d ", io->i_bn);*/
 	sector = (unsigned long) io->i_bn * DEV_BSIZE / dd->d_secsize;
 	nblocks = dd->d_partitions[partition].p_size;
 #ifndef SMALL
@@ -138,6 +141,7 @@ wdstrategy(io,func)
 		return(-1);
 	}
 #endif
+	sector += io->i_boff;
 
 	address = io->i_ma;
         while (iosize > 0) {
@@ -200,6 +204,8 @@ wdio(func, unit, blknm, addr)
 			    printf("--- badblock code -> Old = %d; ",
 				blknm);
 #endif
+			    printf("--- badblock code -> Old = %d; ",
+				blknm);
 			blknm = dd->d_secperunit - dd->d_nsectors
 				- (bt_ptr - dkbad[unit].bt_bad) - 1;
 			cylin = blknm / dd->d_secpercyl;
@@ -218,6 +224,7 @@ retry:
 	printf("sec %d sdh %x cylin %d ", sector,
 		WDSD_IBM | (unit<<4) | (head & 0xf), cylin);
 #endif
+/*printf("c %d h %d s %d ", cylin, head, sector);*/
 	outb(wdc+wd_precomp, 0xff);
 	outb(wdc+wd_seccnt, 1);
 	outb(wdc+wd_sector, sector);
@@ -258,14 +265,9 @@ error:
 	if (++retries < RETRIES)
 		goto retry;
 	if (!wdquiet)
-#ifdef	SMALL
-	    printf("wd%d: hard error: sector %d status %x error %x\n", unit,
-		blknm, inb(wdc+wd_status), erro);
-#else
 	    printf("wd%d: hard %s error: sector %d status %b error %b\n", unit,
 		opcode == WDCC_READ? "read" : "write", blknm, 
 		inb(wdc+wd_status), WDCS_BITS, erro, WDERR_BITS);
-#endif
 	return (-1);
 }
 
@@ -289,37 +291,37 @@ wdinit(io)
 #ifdef	SMALL
 	dd = &disklabel;
 #else
-	/* reset controller */
-	outb(wdc+wd_ctlr, 12); wait(10); outb(wdc+wd_ctlr, 8);
-	wdwait();
-
 	dd = &wdsizes[unit];
+#endif
 
-tryagainrecal:
+	/* reset controller */
+	outb(wdc+wd_ctlr,6);
+	DELAY(1000);
+	outb(wdc+wd_ctlr,2);
+	DELAY(1000);
+	while(inb(wdc+wd_altsts) & WDCS_BUSY);
+	outb(wdc+wd_ctlr,8);
+
 	/* set SDH, step rate, do restore to recalibrate drive */
+tryagainrecal:
 	outb(wdc+wd_sdh, WDSD_IBM | (unit << 4));
 	wdwait();
 	outb(wdc+wd_command, WDCC_RESTORE | WD_STEP);
 	wdwait();
 	if ((i = inb(wdc+wd_status)) & WDCS_ERR) {
-/*#ifdef SMALL
-		printf("wd%d: recal status %x error %x\n",
-			unit, i, inb(wdc+wd_error));
-#else*/
 		printf("wd%d: recal status %b error %b\n",
 			unit, i, WDCS_BITS, inb(wdc+wd_error), WDERR_BITS);
-/*#endif*/
 		if (++errcnt < 10)
 			goto tryagainrecal;
 		return(-1);
 	}
 
-#ifdef nada
+#ifndef SMALL
 	/*
 	 * Some controllers require this (after a recal they
 	 * revert to a logical translation mode to compensate for
 	 * dos limitation on 10-bit cylinders -- *shudder* -wfj)
-	 * note: cylinders *must* be fewer than or equal to 8 to
+	 * note: heads *must* be fewer than or equal to 8 to
 	 * compensate for some IDE drives that latch this for all time.
 	 */
 	outb(wdc+wd_sdh, WDSD_IBM | (unit << 4) + 8 -1);
@@ -329,7 +331,6 @@ tryagainrecal:
 	outb(wdc+wd_command, 0x91);
 	while (inb(wdc+wd_status) & WDCS_BUSY) ;
 
-#endif
 	errcnt = 0;
 retry:
 	/*
@@ -351,13 +352,8 @@ retry:
 		if (++errcnt < RETRIES)
 			goto retry;
 		if (!wdquiet)
-/*#ifdef SMALL
-		    printf("wd%d: reading label, status %x error %x\n",
-			unit, i, err);
-#else*/
 		    printf("wd%d: reading label, status %b error %b\n",
 			unit, i, WDCS_BITS, err, WDERR_BITS);
-/*#endif*/
 		return(-1);
 	}
 
@@ -383,27 +379,24 @@ retry:
 		outb(wdc+wd_precomp, 0xff);	/* force head 3 bit off */
 		return (0) ;
 	}
-#endif SMALL
-#ifdef SMALL
 #ifdef WDDEBUG
 	printf("magic %x sect %d\n", dd->d_magic, dd->d_nsectors);
 #endif
-#endif	SMALL
+#endif	!SMALL
 
+/*printf("C%dH%dS%d ", dd->d_ncylinders, dd->d_ntracks, dd->d_nsectors);*/
 
-#ifdef nada
 	/* now that we know the disk geometry, tell the controller */
-	outb(wdc+wd_cyl_lo, dd->d_ncylinders);
-	outb(wdc+wd_cyl_hi, (dd->d_ncylinders)>>8);
+	outb(wdc+wd_cyl_lo, dd->d_ncylinders+1);
+	outb(wdc+wd_cyl_hi, (dd->d_ncylinders+1)>>8);
 	outb(wdc+wd_sdh, WDSD_IBM | (unit << 4) + dd->d_ntracks-1);
 	outb(wdc+wd_seccnt, dd->d_nsectors);
 	outb(wdc+wd_command, 0x91);
 	while (inb(wdc+wd_status) & WDCS_BUSY) ;
-#endif
 
 	dkbad[unit].bt_bad[0].bt_cyl = -1;
-	/*outb(wdc+wd_precomp, dd->d_precompcyl / 4);*/
 
+	if (dd->d_flags & D_BADSECT) {
 	/*
 	 * Read bad sector table into memory.
 	 */
@@ -420,6 +413,7 @@ retry:
 		if (!wdquiet)
 			printf("wd%d: error in bad-sector file\n", unit);
 		dkbad[unit].bt_bad[0].bt_cyl = -1;
+	}
 	}
 	return(0);
 }

@@ -7,12 +7,12 @@ CLEANFILES+=	gmon.o moncrt0.o core a.out
 all: ${OBJS}
 
 crt0.o: crt0.c
-	${CC} -c -DCRT0 ${.ALLSRC}
+	${CC} ${CFLAGS} -c -DCRT0 ${.ALLSRC}
 	${LD} -x -r ${.TARGET}
 	mv a.out ${.TARGET}
 
 moncrt0.o: crt0.c
-	${CC} -c -DMCRT0 ${.ALLSRC} -o ${.TARGET}
+	${CC} ${CFLAGS} -c -DMCRT0 ${.ALLSRC} -o ${.TARGET}
 	${LD} -x -r ${.TARGET}
 	mv a.out ${.TARGET}
 

@@ -11,6 +11,6 @@ NOPROFILE=	noprofile
 
 install:
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>
 
 .SUFFIXES: .cc

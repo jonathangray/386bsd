@@ -76,4 +76,16 @@ struct	emcsts {
 	long	em_tar;		/* memory mapped temp A register when swtched */
 	long	em_dl;		/* memory mapped D low register when swtched */
 };
+
+/* Intel prefer's long real (53 bit) precision */
+#define	__iBCS_NPXCW__		0x262
+/* wfj prefer's temporary real (64 bit) precision */
+#define	__386BSD_NPXCW__	0x362
+
+#ifdef __386BSD__
+#define	__INITIAL_NPXCW__	__386BSD_NPXCW__
+#else
+#define	__INITIAL_NPXCW__	__iBCS_NPXCW__
+#endif
+
 #endif	___NPX87___

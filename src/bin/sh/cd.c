@@ -126,8 +126,10 @@ docd(dest, print)
 	}
 	updatepwd(dest);
 	INTON;
+#ifdef not
 	if (print && iflag)
 		out1fmt("%s\n", stackblock());
+#endif
 	return 0;
 }
 
@@ -220,8 +222,10 @@ top:
 	}
 	updatepwd(p);
 	INTON;
+#ifdef not
 	if (print && iflag)
 		out1fmt("%s\n", p);
+#endif
 	return 0;
 }
 #endif /* SYMLINKS */

@@ -37,11 +37,13 @@
 if [ ! -r version ]
 then
 	echo 0 > version
+else
+	expr `cat version` + 1 > version
 fi
 
 touch version
-v=`cat version` u=${USER-root} d=`pwd` h=`hostname` t=`date`
-( echo "char sccs[] = \"@(#)4.3 BSD Reno #${v}: ${t} (${u}@${h}:${d})\\n\";" ;
-  echo "char version[] = \"4.3 BSD Reno UNIX #${v}: ${t}\\n    ${u}@${h}:${d}\\n\";"
+v=`cat version` t=`date "+ %m/%d/%y %H:%M"`
+(
+  echo "char version[] = \"version: ${v} ${t}\";"
 ) > vers.c
 echo `expr ${v} + 1` > version

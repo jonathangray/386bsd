@@ -92,7 +92,6 @@ union	descriptor	{
 	struct	segment_descriptor sd;
 	struct	gate_descriptor gd;
 };
-#define	d_type	gd.gd_type
 
 	/* system segments and gate types */
 #define	SDT_SYSNULL	 0	/* system null */
@@ -172,11 +171,11 @@ extern ssdtosd() ;	/* to decode a ssd */
 extern sdtossd() ;	/* to encode a sd */
 
 /*
- * region descriptors, used to load gdt/idt tables before segments yet exist
+ * region descriptors, used to load gdt/idt tables before segments yet exist.
  */
 struct region_descriptor {
-	unsigned rd_limit:16 ;		/* segment extent */
-	char *rd_base;			/* base address  */
+	unsigned rd_limit:16;		/* segment extent */
+	unsigned rd_base:32;		/* base address  */
 };
 
 /*
@@ -188,3 +187,10 @@ struct region_descriptor {
 #define	SEGEX_TI	0x04	/* local descriptor table */
 				/* other bits are affected descriptor index */
 #define SEGEX_IDX(s)	((s)>>3)&0x1fff)
+
+/*
+ * Size of IDT table
+ */
+
+#define	NIDT	256
+#define	NRSVIDT	32		/* reserved entries for cpu exceptions */

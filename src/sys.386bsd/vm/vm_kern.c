@@ -361,8 +361,8 @@ kmem_malloc(map, size, canwait)
 	vm_page_t		m;
 	extern vm_object_t	kmem_object;
 
-	if (map != kmem_map && map != mb_map)
-		panic("kern_malloc_alloc: map != {kmem,mb}_map");
+	if (map != kmem_map && map != mb_map && map != buffer_map)
+		panic("kern_malloc_alloc: map != {kmem,mb,buffer}_map");
 
 	size = round_page(size);
 	addr = vm_map_min(map);
@@ -487,6 +487,57 @@ vm_offset_t kmem_alloc_wait(map, size)
 		addr = vm_map_min(map);
 		result = vm_map_find(map, NULL, (vm_offset_t) 0,
 				&addr, size, TRUE);
+
+		lock_clear_recursive(&map->lock);
+		if (result != KERN_SUCCESS) {
+
+			if ( (vm_map_max(map) - vm_map_min(map)) < size ) {
+				vm_map_unlock(map);
+				return(0);
+			}
+
+			assert_wait((int)map, TRUE);
+			vm_map_unlock(map);
+thread_wakeup(&vm_pages_needed); /* XXX */
+			thread_block();
+		}
+		else {
+			vm_map_unlock(map);
+		}
+
+	} while (result != KERN_SUCCESS);
+
+	return(addr);
+}
+
+/*
+ *	kmem_alloc_wired_wait
+ *
+ *	Allocates nonpageable memory from a sub-map of the kernel.  If the submap
+ *	has no room, the caller sleeps waiting for more memory in the submap.
+ *
+ */
+vm_offset_t kmem_alloc_wired_wait(map, size)
+	vm_map_t	map;
+	vm_size_t	size;
+{
+	vm_offset_t	addr;
+	int		result;
+
+	size = round_page(size);
+
+	do {
+		/*
+		 *	To make this work for more than one map,
+		 *	use the map's lock to lock out sleepers/wakers.
+		 *	Unfortunately, vm_map_find also grabs the map lock.
+		 */
+		vm_map_lock(map);
+		lock_set_recursive(&map->lock);
+
+		addr = vm_map_min(map);
+		result = vm_map_find(map, NULL, (vm_offset_t) 0,
+				&addr, size, FALSE);
 
 		lock_clear_recursive(&map->lock);
 		if (result != KERN_SUCCESS) {

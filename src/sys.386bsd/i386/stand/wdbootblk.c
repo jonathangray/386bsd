@@ -51,22 +51,48 @@
  */
 #include "i386/isa/isa.h"
 #include "i386/isa/wdreg.h"
-#define	NOP	jmp 1f ; nop ; 1:
+#define	NOP	inb $0x84,%al
 #define BIOSRELOC	0x7c00
-#define start		0x70400
+#define start		RELOC+0x400
 
 	/* step 0 force descriptors to bottom of address space */
-
-	.byte 0xfa,0xb8,0x30,0x00,0x8e,0xd0,0xbc,0x00,0x01 #ll fb
+	
+	cli
+	.byte 0xb8,0x30,0x00	/* mov $0x30,%ax */
+	mov %ax, %ss
+	.byte 0xbc,0x00,0x01	/* mov $0x100,%sp */
 
 	xorl	%eax,%eax
 	movl	%ax,%ds
 	movl	%ax,%es
 
+	/* obtain BIOS parameters for hard disk XXX */
+	movb	$0x9f,%ah	 /* write to 0x9ff00  XXX */
+	movb	$0xf0,%al
+	mov	%ax,%es
+	xor	%edi,%edi
+
+	.byte 0xf, 0xb4, 0x36 ; .word  0x41*4	/* lfs 0x41*4, %si */
+	xorb	%ch,%ch
+	movb	$0x10,%cl
+	fs
+	rep
+	movsb
+
+	.byte 0xf, 0xb4, 0x36 ; .word  0x46*4	/* lfs 0x46*4, %si */
+	xorb	%ch,%ch
+	movb	$0x10,%cl
+	fs
+	rep
+	movsb
+
+ 	xorl	%eax,%eax
+	movl	%ax,%es
+
 	/* step 1 load new descriptor table */
 
-	.byte 0x2E,0x0F,1,0x16
-	.word	BIOSRELOC+0x4a	#GDTptr
+	.byte 0x3E,0x0F,1,0x16
+	.word	BIOSRELOC+0x6e	#GDTptr
 	# word aword cs lgdt GDTptr
 
 	/* step 2 turn on protected mode */
@@ -86,7 +112,7 @@
 	movl	%ax,%es
 	movl	%ax,%ss
 	word
-	ljmp	$0x8,$ BIOSRELOC+0x50	/* would be nice if .-RELOC+0x7c00 worked */
+	ljmp	$0x8,$ BIOSRELOC+0x74	/* would be nice if .-RELOC+0x7c00 worked */
 
  /* Global Descriptor Table contains three descriptors:
   * 0x00: Null: not used
@@ -111,7 +137,7 @@ DataDesc:	.word	0xFFFF	# limit at maximum: (bits 15:0)
  *  contains 6-byte pointer information for LGDT
  */
 GDTptr:	.word	0x17	# limit to three 8 byte selectors(null,code,data)
-	.long 	BIOSRELOC+0x32	# GDT -- arrgh, gas again!
+	.long 	BIOSRELOC+0x56	# GDT -- arrgh, gas again!
 
 	/* step 4 relocate to final bootstrap address. */
 reloc:
@@ -120,7 +146,7 @@ reloc:
 	movl	$512,%ecx
 	rep
 	movsb
- movl $0x60000,%esp
+ 	movl	$0xa0000, %esp
 	pushl	$dodisk
 	ret
 
@@ -147,8 +173,8 @@ dodisk:
 	/* check to make sure controller is not busy and we have data ready */
 readblk:
 	movl	$ IO_WD1+wd_status,%edx
-	inb	%dx,%al
 	NOP
+	inb	%dx,%al
 	testb	$ WDCS_BUSY,%al
 	jnz readblk
 	testb	$ WDCS_DRQ,%al
@@ -170,17 +196,17 @@ readblk:
 	
 	movl	$ IO_WD1+wd_cyl_lo,%edx
 	inb	%dx,%al
-	NOP
 	xorl	%ecx,%ecx
 	movb	%al,%cl
 	incl	%edx
-	inb	%dx,%al		/* cyl_hi */
 	NOP
+	inb	%dx,%al		/* cyl_hi */
 	movb	%al,%ch
 	pushl	%ecx		/* cyloffset */
 
 	incl	%edx
 	xorl	%eax,%eax
+	NOP
 	inb	%dx,%al		/* sdh */
 	andb	$0x10,%al	/* isolate unit # bit */
 	shrb	$4,%al
@@ -192,14 +218,14 @@ readblk:
 
 	/* sorry, no flags at this point! */
 
-	pushl	$ start
-	ret	/* main (dev, unit, offset) */
+	movl	$ start, %eax
+	call	%eax /* main (dev, unit, offset) */
 
 ebootblkcode:
 
 	/* remaining space usable for a disk label */
 	
-	.space	510-223		/* would be nice if .space 512-2-. worked */
+	.org	0x1fe
 	.word	0xaa55		/* signature -- used by BIOS ROM */
 
 ebootblk: 			/* MUST BE EXACTLY 0x200 BIG FOR SURE */

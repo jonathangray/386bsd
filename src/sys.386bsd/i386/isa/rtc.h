@@ -71,6 +71,12 @@
 #define	 RTCRS_RST	 0x00		/* normal reset */
 #define	 RTCRS_LOAD	 0x04		/* load system */
 
+#define RTC_FDISKETTE	0x10	/* diskette drive type in upper/lower nibble */
+#define	 RTCFDT_NONE	 0		/* none present */
+#define	 RTCFDT_360K	 0x10		/* 360K */
+#define	 RTCFDT_12M	 0x20		/* 1.2M */
+#define	 RTCFDT_144M	 0x40		/* 1.44M */
+
 #define RTC_BASELO	0x15	/* low byte of basemem size */
 #define RTC_BASEHI	0x16	/* high byte of basemem size */
 #define RTC_EXTLO	0x17	/* low byte of extended mem size */

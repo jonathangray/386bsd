@@ -123,7 +123,7 @@ u_char c;
 		break ;
 	}
 
-#ifdef SMALL
+#ifndef SMALL
 	/* implement a scroll */
 	if (crtat >= Crtat+COL*ROW*CHR) {
 		/* move text up */

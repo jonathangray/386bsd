@@ -106,12 +106,6 @@ kmstartup()
 	kcount = (u_short *)(((int)sbuf) + sizeof (struct phdr));
 }
 
-/*
- * This routine is massaged so that it may be jsb'ed to on vax.
- */
-asm(".text");
-asm("#the beginning of mcount()");
-asm(".data");
 mcount()
 {
 	register char *selfpc;			/* r11 => r5 */
@@ -121,7 +115,6 @@ mcount()
 	register long toindex;			/* r7  => r1 */
 	static int s;
 
-	asm("	.text");		/* make sure we're in text space */
 	/*
 	 * Check that we are profiling.
 	 */
@@ -160,6 +153,19 @@ mcount()
 	asm("	movl (sp), r11");	/* selfpc = ... (jsb frame) */
 	asm("	movl 16(fp), r10");	/* frompcindex =     (calls frame) */
 #endif
+#if defined(i386)
+	/*
+	 * selfpc = pc pushed by mcount call
+	 */
+	asm("movl 4(%%ebp),%0" : "=r" (selfpc));
+	/*
+	 * frompcindex = pc pushed by jsr into self.
+	 * in GCC, the caller's stack frame has already been built, so we
+	 * have to chase the base pointer to find caller's raddr.
+	 */
+	asm("movl (%%ebp),%0" : "=r" (frompcindex));
+	frompcindex = ((unsigned short **)frompcindex)[1];
+#endif /* i386 */
 #if defined(tahoe)
 	asm("	movl -8(fp),r12");	/* selfpc = callf frame */
 	asm("	movl (fp),r11");
@@ -186,7 +192,7 @@ mcount()
 	 * For example:	signal catchers get called from the stack,
 	 *	not from text space.  too bad.
 	 */
-	frompcindex = (u_short *)((long)frompcindex - (long)s_lowpc);
+	frompcindex = (u_short *)((u_long)frompcindex - (u_long)s_lowpc);
 	if ((u_long)frompcindex > s_textsize)
 		goto done;
 	frompcindex =
@@ -274,7 +280,4 @@ overflow:
 	printf("mcount: tos overflow\n");
 	goto out;
 }
-asm(".text");
-asm("#the end of mcount()");
-asm(".data");
 #endif

@@ -107,72 +107,90 @@ struct	ne_softc {
 	struct	prhdr	ns_ph;		/* hardware header of incoming packet*/
 	struct	ether_header ns_eh;	/* header of incoming packet */
 	u_char	ns_pb[2048 /*ETHERMTU+sizeof(long)*/];
+	short	ns_txstart;		/* transmitter buffer start */
+	short	ns_rxend;		/* recevier buffer end */
+	short	ns_rxbndry;		/* recevier buffer boundary */
+	short	ns_port;		/* i/o port base */
+	short	ns_mode;		/* word/byte mode */
 } ne_softc[NNE] ;
 #define	ENBUFSIZE	(sizeof(struct ether_header) + ETHERMTU + 2 + ETHER_MIN_LEN)
 
-int nec;
+#define	PAT(n)	(0xa55a + 37*(n))
 
 u_short boarddata[16];
  
 neprobe(dvp)
 	struct isa_device *dvp;
 {
-	int val,i,s;
+	int val, i, s, sum, bytemode = 1, pat;
 	register struct ne_softc *ns = &ne_softc[0];
+	register nec;
 
 #ifdef lint
 	neintr(0);
 #endif
 
-	nec = dvp->id_iobase;
+	nec = ns->ns_port = dvp->id_iobase;
 	s = splimp();
 
-	/* Reset the bastard */
-	val = inb(nec+ne_reset);
-	DELAY(2000000);
-	outb(nec+ne_reset,val);
+	if (bytemode) {
+		/* Byte Transfers, Burst Mode Select, Fifo at 8 bytes */
+		ns->ns_mode = DSDC_BMS|DSDC_FT1;
+		ns->ns_txstart = TBUF8;
+		ns->ns_rxend = RBUFEND8;
+	} else {
+word:
+		/* Word Transfers, Burst Mode Select, Fifo at 8 bytes */
+		ns->ns_mode = DSDC_WTS|DSDC_BMS|DSDC_FT1;
+		ns->ns_txstart = TBUF16;
+		ns->ns_rxend = RBUFEND16;
+		bytemode = 0;
+	}
 
-	outb(nec+ds_cmd, DSCM_STOP|DSCM_NODMA);
+	/* Reset the bastard */
+	val = inb(nec + ne_reset);
+	DELAY(200);
+	outb(nec + ne_reset, val);
+	DELAY(200);
+
+	outb(nec + ds_cmd, DSCM_STOP|DSCM_NODMA);
 	
-	i = 1000000;
-	while ((inb(nec+ds0_isr)&DSIS_RESET) == 0 && i-- > 0);
+	i = 10000;
+	while ((inb(nec + ds0_isr) & DSIS_RESET) == 0 && i-- > 0);
 	if (i < 0) return (0);
 
-	outb(nec+ds0_isr, 0xff);
-
-	/* Word Transfers, Burst Mode Select, Fifo at 8 bytes */
-	outb(nec+ds0_dcr, DSDC_WTS|DSDC_BMS|DSDC_FT1);
-
-	outb(nec+ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_STOP);
-	DELAY(10000);
+	outb(nec + ds0_isr, 0xff);
+	outb(nec + ds0_dcr, ns->ns_mode);
+	outb(nec + ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_STOP);
+	DELAY(1000);
 
 	/* Check cmd reg and fail if not right */
-	if ((i=inb(nec+ds_cmd)) != (DSCM_NODMA|DSCM_PG0|DSCM_STOP))
+	if ((i = inb(nec + ds_cmd)) != (DSCM_NODMA|DSCM_PG0|DSCM_STOP))
 		return(0);
 
-	outb(nec+ds0_tcr, 0);
-	outb(nec+ds0_rcr, DSRC_MON);
-	outb(nec+ds0_pstart, RBUF/DS_PGSIZE);
-	outb(nec+ds0_pstop, RBUFEND/DS_PGSIZE);
-	outb(nec+ds0_bnry, RBUFEND/DS_PGSIZE);
-	outb(nec+ds0_imr, 0);
-	outb(nec+ds0_isr, 0);
-	outb(nec+ds_cmd, DSCM_NODMA|DSCM_PG1|DSCM_STOP);
-	outb(nec+ds1_curr, RBUF/DS_PGSIZE);
-	outb(nec+ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_STOP);
+	outb(nec + ds0_tcr, 0);
+	outb(nec + ds0_rcr, DSRC_MON);
+	outb(nec + ds0_pstart, (ns->ns_txstart+PKTSZ)/DS_PGSIZE);
+	outb(nec + ds0_pstop, ns->ns_rxend/DS_PGSIZE);
+	outb(nec + ds0_bnry, ns->ns_rxend/DS_PGSIZE);
+	outb(nec + ds0_imr, 0);
+	outb(nec + ds0_isr, 0);
+	outb(nec + ds_cmd, DSCM_NODMA|DSCM_PG1|DSCM_STOP);
+	outb(nec + ds1_curr, (ns->ns_txstart+PKTSZ)/DS_PGSIZE);
+	outb(nec + ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_STOP);
+
 
 #ifdef NEDEBUG
-#define	PAT(n)	(0xa55a + 37*(n))
 #define	RCON	37
-	{	int i, rom, pat;
+	{	int i, rom;
 
 		rom=1;
 		printf("ne ram ");
 		
 		for (i = 0; i < 0xfff0; i+=4) {
 			pat = PAT(i);
-			neput(&pat,i,4);
-			nefetch(&pat,i,4);
+			neput(ns, &pat,i,4);
+			nefetch(ns, &pat,i,4);
 			if (pat == PAT(i)) {
 				if (rom) {
 					rom=0;
@@ -185,15 +203,31 @@ neprobe(dvp)
 				}
 			}
 			pat=0;
-			neput(&pat,i,4);
+			neput(ns, &pat,i,4);
 		}
 		printf("\n");
 	}
 #endif
 
+	/*
+	 * <groan> detect difference between units
+	 * solely by where the RAM is decoded.
+	 */
+	pat = PAT(0);
+	neput(ns, &pat, ns->ns_txstart, 4);
+	nefetch(ns, &pat, ns->ns_txstart, 4);
+	if (pat != PAT(0)) {
+		if (bytemode)
+			goto word;
+		else return (0);
+	}
+
+
 	/* Extract board address */
-	nefetch ((caddr_t)boarddata, 0, sizeof(boarddata));
-	for(i=0; i < 6; i++)  ns->ns_addr[i] = boarddata[i];
+	nefetch (ns, (caddr_t)boarddata, 0, sizeof(boarddata));
+
+	for(i=0; i < 6; i++)
+		ns->ns_addr[i] = boarddata[i];
 	splx(s);
 	return (1);
 }
@@ -201,14 +235,20 @@ neprobe(dvp)
 /*
  * Fetch from onboard ROM/RAM
  */
-nefetch (up, ad, len) caddr_t up; {
+nefetch (ns, up, ad, len) struct ne_softc *ns; caddr_t up; {
 	u_char cmd;
+	register nec = ns->ns_port;
+	int counter = 100000;
 
-	cmd = inb(nec+ds_cmd);
-	outb (nec+ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_START);
+	cmd = inb (nec + ds_cmd);
+	outb (nec + ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_START);
 
 	/* Setup remote dma */
-	outb (nec+ds0_isr, DSIS_RDC);
+	outb (nec + ds0_isr, DSIS_RDC);
+
+	if ((ns->ns_mode & DSDC_WTS) && len&1)
+		len++;		/* roundup to words */
+
 	outb (nec+ds0_rbcr0, len);
 	outb (nec+ds0_rbcr1, len>>8);
 	outb (nec+ds0_rsar0, ad);
@@ -216,10 +256,15 @@ nefetch (up, ad, len) caddr_t up; {
 
 	/* Execute & extract from card */
 	outb (nec+ds_cmd, DSCM_RREAD|DSCM_PG0|DSCM_START);
-	insw (nec+ne_data, up, len/2);
+
+	if (ns->ns_mode & DSDC_WTS)
+		insw (nec+ne_data, up, len/2);
+	else
+		insb (nec+ne_data, up, len);
 
 	/* Wait till done, then shutdown feature */
-	while ((inb (nec+ds0_isr) & DSIS_RDC) == 0) ;
+	while ((inb (nec+ds0_isr) & DSIS_RDC) == 0 && counter-- > 0)
+		;
 	outb (nec+ds0_isr, DSIS_RDC);
 	outb (nec+ds_cmd, cmd);
 }
@@ -227,15 +272,20 @@ nefetch (up, ad, len) caddr_t up; {
 /*
  * Put to onboard RAM
  */
-neput (up, ad, len) caddr_t up; {
+neput (ns, up, ad, len) struct ne_softc *ns; caddr_t up; {
 	u_char cmd;
+	register nec = ns->ns_port;
+	int counter = 100000;
 
 	cmd = inb(nec+ds_cmd);
 	outb (nec+ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_START);
 
 	/* Setup for remote dma */
 	outb (nec+ds0_isr, DSIS_RDC);
-	if(len&1) len++;		/* roundup to words */
+
+	if ((ns->ns_mode & DSDC_WTS) && len&1)
+		len++;		/* roundup to words */
+
 	outb (nec+ds0_rbcr0, len);
 	outb (nec+ds0_rbcr1, len>>8);
 	outb (nec+ds0_rsar0, ad);
@@ -243,10 +293,14 @@ neput (up, ad, len) caddr_t up; {
 
 	/* Execute & stuff to card */
 	outb (nec+ds_cmd, DSCM_RWRITE|DSCM_PG0|DSCM_START);
-	outsw (nec+ne_data, up, len/2);
+	if (ns->ns_mode & DSDC_WTS)
+		outsw (nec+ne_data, up, len/2);
+	else
+		outsb (nec+ne_data, up, len);
 	
 	/* Wait till done, then shutdown feature */
-	while ((inb (nec+ds0_isr) & DSIS_RDC) == 0) ;
+	while ((inb (nec+ds0_isr) & DSIS_RDC) == 0 && counter-- > 0)
+		;
 	outb (nec+ds0_isr, DSIS_RDC);
 	outb (nec+ds_cmd, cmd);
 }
@@ -300,7 +354,8 @@ neinit(unit)
 	register struct ne_softc *ns = &ne_softc[unit];
 	struct ifnet *ifp = &ns->ns_if;
 	int s;
-	register i; char *cp;
+	int i; char *cp;
+	register nec = ns->ns_port;
 
  	if (ifp->if_addrlist == (struct ifaddr *)0) return;
 	if (ifp->if_flags & IFF_RUNNING) return;
@@ -321,23 +376,25 @@ neinit(unit)
 	outb (nec+ds0_imr, 0);
 	outb (nec+ds0_isr, 0xff);
 
-	/* Word Transfers, Burst Mode Select, Fifo at 8 bytes */
-	outb(nec+ds0_dcr, DSDC_WTS|DSDC_BMS|DSDC_FT1);
+	/* Word Transfer select, Burst Mode Select, Fifo at 8 bytes */
+	outb(nec+ds0_dcr, ns->ns_mode);
+
 	outb(nec+ds0_tcr, 0);
 	outb (nec+ds0_rcr, DSRC_MON);
 	outb (nec+ds0_tpsr, 0);
-	outb(nec+ds0_pstart, RBUF/DS_PGSIZE);
-	outb(nec+ds0_pstop, RBUFEND/DS_PGSIZE);
-	outb(nec+ds0_bnry, RBUF/DS_PGSIZE);
+	outb(nec+ds0_pstart, (ns->ns_txstart+PKTSZ)/DS_PGSIZE);
+	outb(nec+ds0_pstop, ns->ns_rxend/DS_PGSIZE);
+	outb(nec+ds0_bnry, (ns->ns_txstart+PKTSZ)/DS_PGSIZE);
 	outb (nec+ds_cmd, DSCM_NODMA|DSCM_PG1|DSCM_STOP);
-	outb(nec+ds1_curr, RBUF/DS_PGSIZE);
-	ns->ns_cur = RBUF/DS_PGSIZE;
+	outb(nec+ds1_curr, (ns->ns_txstart+PKTSZ)/DS_PGSIZE);
+	ns->ns_cur = (ns->ns_txstart+PKTSZ)/DS_PGSIZE;
 	outb (nec+ds_cmd, DSCM_NODMA|DSCM_PG0|DSCM_START);
 	outb (nec+ds0_rcr, DSRC_AB);
-	outb(nec+ds0_dcr, DSDC_WTS|DSDC_BMS|DSDC_FT1);
+	outb(nec+ds0_dcr, ns->ns_mode);
 	outb (nec+ds0_imr, 0xff);
 
 	ns->ns_if.if_flags |= IFF_RUNNING;
+	ns->ns_flags &= ~DSF_LOCK;
 	ns->ns_oactive = 0; ns->ns_mask = ~0;
 	nestart(ifp);
 	splx(s);
@@ -356,6 +413,7 @@ nestart(ifp)
 	struct mbuf *m0, *m;
 	int buffer;
 	int len = 0, i, total,t;
+	register nec = ns->ns_port;
 
 	/*
 	 * The DS8390 has only one transmit buffer, if it is busy we
@@ -382,7 +440,7 @@ nestart(ifp)
 	 */
 
 	ns->ns_flags |= DSF_LOCK;	/* prevent entering nestart */
-	buffer = TBUF; len = i = 0;
+	buffer = ns->ns_txstart; len = i = 0;
 	t = 0;
 	for (m0 = m; m != 0; m = m->m_next)
 		t += m->m_len;
@@ -392,14 +450,14 @@ nestart(ifp)
 	for (m0 = m; m != 0; ) {
 		
 		if (m->m_len&1 && t > m->m_len) {
-			neput(mtod(m, caddr_t), buffer, m->m_len - 1);
+			neput(ns, mtod(m, caddr_t), buffer, m->m_len - 1);
 			t -= m->m_len - 1;
 			buffer += m->m_len - 1;
 			m->m_data += m->m_len - 1;
 			m->m_len = 1;
 			m = m_pullup(m, 2);
 		} else {
-			neput(mtod(m, caddr_t), buffer, m->m_len);
+			neput(ns, mtod(m, caddr_t), buffer, m->m_len);
 			buffer += m->m_len;
 			t -= m->m_len;
 			MFREE(m, m0);
@@ -415,13 +473,13 @@ nestart(ifp)
 	if (len < ETHER_MIN_LEN) len = ETHER_MIN_LEN;
 	outb(nec+ds0_tbcr0,len&0xff);
 	outb(nec+ds0_tbcr1,(len>>8)&0xff);
-	outb(nec+ds0_tpsr, TBUF/DS_PGSIZE);
+	outb(nec+ds0_tpsr, ns->ns_txstart/DS_PGSIZE);
 	outb(nec+ds_cmd, DSCM_TRANS|DSCM_NODMA|DSCM_START);
 }
 
 /* buffer successor/predecessor in ring? */
-#define succ(n) (((n)+1 >= RBUFEND/DS_PGSIZE) ? RBUF/DS_PGSIZE : (n)+1)
-#define pred(n) (((n)-1 < RBUF/DS_PGSIZE) ? RBUFEND/DS_PGSIZE-1 : (n)-1)
+#define succ(n) (((n)+1 >= ns->ns_rxend/DS_PGSIZE) ? (ns->ns_txstart+PKTSZ)/DS_PGSIZE : (n)+1)
+#define pred(n) (((n)-1 < (ns->ns_txstart+PKTSZ)/DS_PGSIZE) ? ns->ns_rxend/DS_PGSIZE-1 : (n)-1)
 
 /*
  * Controller interrupt.
@@ -430,6 +488,7 @@ neintr(unit)
 {
 	register struct ne_softc *ns = &ne_softc[unit];
 	u_char cmd,isr;
+	register nec = ns->ns_port;
 
 	/* Save cmd, clear interrupt */
 	cmd = inb (nec+ds_cmd);
@@ -458,8 +517,8 @@ loop:
 		lastfree = inb(nec+ds0_bnry);
 
 		/* Have we wrapped? */
-		if (lastfree >= RBUFEND/DS_PGSIZE)
-			lastfree = RBUF/DS_PGSIZE;
+		if (lastfree >= ns->ns_rxend/DS_PGSIZE)
+			lastfree = (ns->ns_txstart+PKTSZ)/DS_PGSIZE;
 		if (pend < lastfree && ns->ns_cur < pend)
 			lastfree = ns->ns_cur;
 		else	if (ns->ns_cur > lastfree)
@@ -470,7 +529,7 @@ loop:
 			u_char nxt;
 
 			/* Extract header from microcephalic board */
-			nefetch(&ns->ns_ph,lastfree*DS_PGSIZE,
+			nefetch(ns, &ns->ns_ph,lastfree*DS_PGSIZE,
 				sizeof(ns->ns_ph));
 			ns->ns_ba = lastfree*DS_PGSIZE+sizeof(ns->ns_ph);
 
@@ -492,8 +551,8 @@ loop:
 			nxt = ns->ns_ph.pr_nxtpg ;
 
 			/* Sanity check */
-			if ( nxt >= RBUF/DS_PGSIZE && nxt <= RBUFEND/DS_PGSIZE
-				&& nxt <= pend)
+			if ( nxt >= (ns->ns_txstart+PKTSZ)/DS_PGSIZE
+				&& nxt <= ns->ns_rxend/DS_PGSIZE && nxt <= pend)
 				ns->ns_cur = nxt;
 			else	ns->ns_cur = nxt = pend;
 
@@ -565,7 +624,7 @@ nerecv(ns)
 		return;
 
 	/* this need not be so torturous - one/two bcopys at most into mbufs */
-	nefetch(ns->ns_pb, ns->ns_ba, min(len,DS_PGSIZE-sizeof(ns->ns_ph)));
+	nefetch(ns, ns->ns_pb, ns->ns_ba, min(len,DS_PGSIZE-sizeof(ns->ns_ph)));
 	if (len > DS_PGSIZE-sizeof(ns->ns_ph)) {
 		int l = len - (DS_PGSIZE-sizeof(ns->ns_ph)), b ;
 		u_char *p = ns->ns_pb + (DS_PGSIZE-sizeof(ns->ns_ph));
@@ -574,13 +633,13 @@ nerecv(ns)
 		b = ns->ns_cur*DS_PGSIZE;
 		
 		while (l >= DS_PGSIZE) {
-			nefetch(p, b, DS_PGSIZE);
+			nefetch(ns, p, b, DS_PGSIZE);
 			p += DS_PGSIZE; l -= DS_PGSIZE;
 			if(++ns->ns_cur > 0x7f) ns->ns_cur = 0x46;
 			b = ns->ns_cur*DS_PGSIZE;
 		}
 		if (l > 0)
-			nefetch(p, b, l);
+			nefetch(ns, p, b, l);
 	}
 	/* don't forget checksum! */
 	len -= sizeof(struct ether_header) + sizeof(long);
@@ -774,7 +833,7 @@ neioctl(ifp, cmd, data)
 		if ((ifp->if_flags & IFF_UP) == 0 &&
 		    ifp->if_flags & IFF_RUNNING) {
 			ifp->if_flags &= ~IFF_RUNNING;
-			outb(nec+ds_cmd,DSCM_STOP|DSCM_NODMA);
+			outb(ns->ns_port + ds_cmd, DSCM_STOP|DSCM_NODMA);
 		} else if (ifp->if_flags & IFF_UP &&
 		    (ifp->if_flags & IFF_RUNNING) == 0)
 			neinit(ifp->if_unit);

@@ -233,9 +233,9 @@ main(argc, argv)
 	else
 		printfcn = printcol;
 
-	/* if -l, -d or -F, and not ignoring the link, use lstat() */
+	/* if -l, -d, -R, or -F, and not ignoring the link, use lstat() */
 	statfcn =
-	    (f_longform || f_listdir || f_type) && !f_ignorelink ? lstat : stat;
+	    (f_longform || f_listdir || f_type || f_recursive) && !f_ignorelink ? lstat : stat;
 
 	if (!argc) {
 		static char dot[] = ".";

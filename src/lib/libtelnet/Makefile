@@ -6,5 +6,5 @@ SRCS+=	kerberos.c enc_des.c
 CFLAGS+= -I/usr/include/kerberosIV
 
 .PATH:  ${.CURDIR}/../../libexec/getty
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>
 

@@ -47,6 +47,7 @@
 #include "errno.h"
 #include "ioctl.h"
 #include "file.h"
+#include "dkbad.h"	/* XXX */
 #include "disklabel.h"
 
 /* symbolic sleep message strings for devices */

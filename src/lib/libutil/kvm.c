@@ -111,6 +111,9 @@ static	char	*tmp;
 static	int	lowram;
 static	struct ste *Sysseg;
 #endif
+#if defined(i386)
+static	struct pde *PTD;
+#endif
 
 #define basename(cp)	((tmp=rindex((cp), '/')) ? tmp+1 : (cp))
 #define	MAXSYMSIZE	256
@@ -159,10 +162,14 @@ static struct nlist nl[] = {
 	{ "_lowram" },
 #define	X_LOWRAM	(X_LAST+2)
 #endif
+#if defined(i386)
+	{ "_IdlePTD" },
+#define	X_IdlePTD	(X_LAST+1)
+#endif
 	{ "" },
 };
 
-static off_t vtophys();
+static off_t Vtophys();
 static void klseek(), seterr(), setsyserr(), vstodb();
 static int getkvars(), kvm_doprocs(), kvm_init();
 
@@ -682,6 +689,26 @@ kvm_getu(p)
 	kp->kp_eproc.e_vm.vm_rssize =
 	    kp->kp_eproc.e_vm.vm_pmap.pm_stats.resident_count; /* XXX */
 #endif
+
+#ifdef i386
+      if (kp->kp_eproc.e_vm.vm_pmap.pm_pdir) {
+              struct pde pde;
+
+              klseek(kmem,
+                      (long)(kp->kp_eproc.e_vm.vm_pmap.pm_pdir + UPTDI), 0);
+              if (read(kmem, (char *)&pde, sizeof pde) == sizeof pde &&
+                      pde.pd_v) {
+
+                      struct pte pte;
+
+                      lseek(mem, (long)ctob(pde.pd_pfnum) +
+                              (ptei(USRSTACK-CLBYTES) * sizeof pte), 0);
+                      if (read(mem, (char *)&pte, sizeof pte) == sizeof pte && +                               pte.pg_v) {
+                              argaddr1 = (long)ctob(pte.pg_pfnum);
+                      }
+              }
+      }
+#endif
 	return(&user.user);
 }
 #else
@@ -759,8 +786,8 @@ kvm_getargs(p, up)
 	const struct proc *p;
 	const struct user *up;
 {
-	char cmdbuf[CLBYTES*2];
-	union {
+	static char cmdbuf[CLBYTES*2];
+	static union {
 		char	argc[CLBYTES*2];
 		int	argi[CLBYTES*2/sizeof (int)];
 	} argspac;
@@ -808,6 +835,9 @@ kvm_getargs(p, up)
 			goto bad;
 		file = (char *) memf;
 	}
+#ifdef i386
+	ip = &argspac.argi[(CLBYTES + CLBYTES/2)/sizeof (int)];
+#else
 	ip = &argspac.argi[CLBYTES*2/sizeof (int)];
 	ip -= 2;                /* last arg word and .long 0 */
 	ip -= stkoff / sizeof (int);
@@ -818,6 +848,7 @@ kvm_getargs(p, up)
 	*(char *)ip = ' ';
 	ip++;
 	nbad = 0;
+#endif
 	for (cp = (char *)ip; cp < &argspac.argc[CLBYTES*2-stkoff]; cp++) {
 		c = *cp & 0177;
 		if (c == 0)
@@ -907,6 +938,21 @@ getkvars()
 			return (-1);
 		}
 #endif
+#if defined(i386)
+		PTD = (struct pde *) malloc(NBPG);
+		if (PTD == NULL) {
+			seterr("out of space for PTD");
+			return (-1);
+		}
+		addr = (long) nl[X_IdlePTD].n_value;
+		(void) lseek(kmem, addr, 0);
+		read(kmem, (char *)&addr, sizeof(addr));
+		(void) lseek(kmem, (long)addr, 0);
+		if (read(kmem, (char *) PTD, NBPG) != NBPG) {
+			seterr("can't read PTD");
+			return (-1);
+		}
+#endif
 	}
 #ifndef NEWVM
 	usrpt = (struct pte *)nl[X_USRPT].n_value;
@@ -960,7 +1006,7 @@ klseek(fd, loc, off)
 {
 
 	if (deadkernel) {
-		if ((loc = vtophys(loc)) == -1)
+		if ((loc = Vtophys(loc)) == -1)
 			return;
 	}
 	(void) lseek(fd, (off_t)loc, off);
@@ -1001,8 +1047,8 @@ vstodb(vsbase, vssize, dmp, dbp, rev)
 
 #ifdef NEWVM
 static off_t
-vtophys(loc)
-	long	loc;
+Vtophys(loc)
+	u_long	loc;
 {
 	off_t newloc = (off_t) -1;
 #ifdef hp300
@@ -1026,6 +1072,30 @@ vtophys(loc)
 		return((off_t) -1);
 	}
 	newloc = (newloc - (off_t)ptob(lowram)) + (loc & PGOFSET);
+#endif
+#ifdef i386
+	struct pde pde;
+	struct pte pte;
+	int p;
+
+	pde = PTD[loc >> PD_SHIFT];
+	if (pde.pd_v == 0) {
+		seterr("vtophys: page directory entry not valid");
+		return((off_t) -1);
+	}
+	p = btop(loc & PT_MASK);
+	newloc = pde.pd_pfnum + (p * sizeof(struct pte));
+	(void) lseek(kmem, (long)newloc, 0);
+	if (read(kmem, (char *)&pte, sizeof pte) != sizeof pte) {
+		seterr("vtophys: cannot obtain desired pte");
+		return((off_t) -1);
+	}
+	newloc = pte.pg_pfnum;
+	if (pte.pg_v == 0) {
+		seterr("vtophys: page table entry not valid");
+		return((off_t) -1);
+	}
+	newloc += (loc & PGOFSET);
 #endif
 	return((off_t) newloc);
 }

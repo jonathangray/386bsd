@@ -80,6 +80,5 @@ void		kmem_free_wakeup();
 vm_map_t	kernel_map;
 vm_map_t	mb_map;
 vm_map_t	kmem_map;
-vm_map_t	exec_map;
 vm_map_t	phys_map;
 vm_map_t	buffer_map;

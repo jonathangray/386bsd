@@ -55,7 +55,11 @@ static char rcsid[] = "$Header: /usr/bill/working/sys/kern/RCS/vfs__bio.c,v 1.2 
 #include "specdev.h"
 #include "mount.h"
 #include "malloc.h"
+#include "vm/vm.h"
 #include "resourcevar.h"
+
+struct buf *getnewbuf(int);
+extern	vm_map_t buffer_map;
 
 /*
  * Initialize buffer headers and related structures.
@@ -96,12 +100,9 @@ void bufinit()
  * If the buffer is not present, allocate a new buffer and load
  * its contents according to the filesystem fill routine.
  */
-bread(vp, blkno, size, cred, bpp)
-	struct vnode *vp;
-	daddr_t blkno;
-	int size;
-	struct ucred *cred;
-	struct buf **bpp;
+int
+bread(struct vnode *vp, daddr_t blkno, int size, struct ucred *cred,
+	struct buf **bpp)
 {
 	struct buf *bp;
 	int rv = 0;
@@ -112,6 +113,7 @@ bread(vp, blkno, size, cred, bpp)
 	if ((bp->b_flags & B_CACHE) == 0 || (bp->b_flags & B_INVAL) != 0) {
 		bp->b_flags |= B_READ;
 		bp->b_flags &= ~(B_DONE|B_ERROR|B_INVAL);
+		bp->b_rcred = cred;
 		VOP_STRATEGY(bp);
 		rv = biowait (bp);
 	}
@@ -124,12 +126,9 @@ bread(vp, blkno, size, cred, bpp)
  * Operates like bread, but also starts I/O on the specified
  * read-ahead block. [See page 55 of Bach's Book]
  */
-breada(vp, blkno, size, rablkno, rabsize, cred, bpp)
-	struct vnode *vp;
-	daddr_t blkno; int size;
-	daddr_t rablkno; int rabsize;
-	struct ucred *cred;
-	struct buf **bpp;
+int
+breada(struct vnode *vp, daddr_t blkno, int size, daddr_t rablkno, int rabsize,
+	struct ucred *cred, struct buf **bpp)
 {
 	struct buf *bp, *rabp;
 	int rv = 0, needwait = 0;
@@ -140,6 +139,7 @@ breada(vp, blkno, size, rablkno, rabsize, cred, bpp)
 	if ((bp->b_flags & B_CACHE) == 0 || (bp->b_flags & B_INVAL) != 0) {
 		bp->b_flags |= B_READ;
 		bp->b_flags &= ~(B_DONE|B_ERROR|B_INVAL);
+		bp->b_rcred = cred;
 		VOP_STRATEGY(bp);
 		needwait++;
 	}
@@ -150,6 +150,7 @@ breada(vp, blkno, size, rablkno, rabsize, cred, bpp)
 	if ((rabp->b_flags & B_CACHE) == 0 || (rabp->b_flags & B_INVAL) != 0) {
 		rabp->b_flags |= B_READ | B_ASYNC;
 		rabp->b_flags &= ~(B_DONE|B_ERROR|B_INVAL);
+		rabp->b_rcred = cred;
 		VOP_STRATEGY(rabp);
 	} else
 		brelse(rabp);
@@ -166,8 +167,8 @@ breada(vp, blkno, size, rablkno, rabsize, cred, bpp)
  * Synchronous write.
  * Release buffer on completion.
  */
-bwrite(bp)
-	register struct buf *bp;
+int
+bwrite(register struct buf *bp)
 {
 	int rv;
 
@@ -177,15 +178,18 @@ bwrite(bp)
 	} else {
 		int wasdelayed;
 
-		if(!(bp->b_flags & B_BUSY))panic("bwrite: not busy");
+		if(!(bp->b_flags & B_BUSY))
+			panic("bwrite: not busy");
+
 		wasdelayed = bp->b_flags & B_DELWRI;
 		bp->b_flags &= ~(B_READ|B_DONE|B_ERROR|B_ASYNC|B_DELWRI);
-		if(wasdelayed) reassignbuf(bp, bp->b_vp);
+		if(wasdelayed)
+			reassignbuf(bp, bp->b_vp);
+
 		bp->b_flags |= B_DIRTY;
+		bp->b_vp->v_numoutput++;
 		VOP_STRATEGY(bp);
 		rv = biowait(bp);
-		if (!rv)
-			bp->b_flags &= ~B_DIRTY;
 		brelse(bp);
 		return (rv);
 	}
@@ -202,11 +206,13 @@ bwrite(bp)
  * NB: magnetic tapes cannot be delayed; they must be
  * written in the order that the writes are requested.
  */
-void bdwrite(bp)
-	register struct buf *bp;
+void
+bdwrite(register struct buf *bp)
 {
 
-	if(!(bp->b_flags & B_BUSY))panic("bdwrite: not busy");
+	if(!(bp->b_flags & B_BUSY))
+		panic("bdwrite: not busy");
+
 	if(bp->b_flags & B_INVAL) {
 		brelse(bp);
 	}
@@ -226,11 +232,13 @@ void bdwrite(bp)
  * Start I/O on a buffer, but do not wait for it to complete.
  * The buffer is released when the I/O completes.
  */
-bawrite(bp)
-	register struct buf *bp;
+void
+bawrite(register struct buf *bp)
 {
 
-	if(!(bp->b_flags & B_BUSY))panic("bawrite: not busy");
+	if(!(bp->b_flags & B_BUSY))
+		panic("bawrite: not busy");
+
 	if(bp->b_flags & B_INVAL)
 		brelse(bp);
 	else {
@@ -238,9 +246,11 @@ bawrite(bp)
 
 		wasdelayed = bp->b_flags & B_DELWRI;
 		bp->b_flags &= ~(B_READ|B_DONE|B_ERROR|B_DELWRI);
-		if(wasdelayed) reassignbuf(bp, bp->b_vp);
+		if(wasdelayed)
+			reassignbuf(bp, bp->b_vp);
 
 		bp->b_flags |= B_DIRTY | B_ASYNC;
+		bp->b_vp->v_numoutput++;
 		VOP_STRATEGY(bp);
 	}
 }
@@ -249,8 +259,8 @@ bawrite(bp)
  * Release a buffer.
  * Even if the buffer is dirty, no I/O is started.
  */
-brelse(bp)
-	register struct buf *bp;
+void
+brelse(register struct buf *bp)
 {
 	int x;
 
@@ -291,10 +301,9 @@ brelse(bp)
 	bp->b_flags &= ~B_BUSY;
 	splx(x);
 
-	return;
 }
 
-int freebufspace = 20*NBPG;
+int freebufspace;
 int allocbufspace;
 
 /*
@@ -303,8 +312,8 @@ int allocbufspace;
  * use that. Otherwise, select something from a free list.
  * Preference is to AGE list, then LRU list.
  */
-struct buf *
-getnewbuf(sz)
+static struct buf *
+getnewbuf(int sz)
 {
 	struct buf *bp;
 	int x;
@@ -316,14 +325,25 @@ start:
 		&& bfreelist[BQ_EMPTY].av_forw != (struct buf *)bfreelist+BQ_EMPTY) {
 		caddr_t addr;
 
-		if ((addr = malloc (sz, M_TEMP, M_NOWAIT)) == 0) goto tryfree;
+/*#define notyet*/
+#ifndef notyet
+		if ((addr = malloc (sz, M_TEMP, M_WAITOK)) == 0) goto tryfree;
+#else /* notyet */
+		/* get new memory buffer */
+		if (round_page(sz) == sz)
+			addr = (caddr_t) kmem_alloc_wired_wait(buffer_map, sz);
+		else
+			addr = (caddr_t) malloc (sz, M_TEMP, M_WAITOK);
+	/*if ((addr = malloc (sz, M_TEMP, M_NOWAIT)) == 0) goto tryfree;*/
+		bzero(addr, sz);
+#endif /* notyet */
 		freebufspace -= sz;
 		allocbufspace += sz;
 
 		bp = bfreelist[BQ_EMPTY].av_forw;
 		bp->b_flags = B_BUSY | B_INVAL;
 		bremfree(bp);
-		bp->b_un.b_addr = (caddr_t) addr;
+		bp->b_un.b_addr = addr;
 		goto fillin;
 	}
 
@@ -344,15 +364,11 @@ tryfree:
 
 	/* if we are a delayed write, convert to an async write! */
 	if (bp->b_flags & B_DELWRI) {
-		/*bp->b_flags &= ~B_DELWRI;*/
 		bp->b_flags |= B_BUSY;
 		bawrite (bp);
 		goto start;
 	}
 
-	/*if (bp->b_flags & (B_INVAL|B_ERROR) == 0) {
-		bremhash(bp);
-	}*/
 
 	if(bp->b_vp)
 		brelvp(bp);
@@ -368,7 +384,8 @@ fillin:
 	bp->b_iodone = 0;
 	bp->b_error = 0;
 	bp->b_wcred = bp->b_rcred = NOCRED;
-	if (bp->b_bufsize != sz) allocbuf(bp, sz);
+	if (bp->b_bufsize != sz)
+		allocbuf(bp, sz);
 	bp->b_bcount = bp->b_bufsize = sz;
 	bp->b_dirtyoff = bp->b_dirtyend = 0;
 	return (bp);
@@ -377,9 +394,8 @@ fillin:
 /*
  * Check to see if a block is currently memory resident.
  */
-struct buf *incore(vp, blkno)
-	struct vnode *vp;
-	daddr_t blkno;
+struct buf *
+incore(struct vnode *vp, daddr_t blkno)
 {
 	struct buf *bh;
 	struct buf *bp;
@@ -408,10 +424,7 @@ struct buf *incore(vp, blkno)
  * cached blocks be of the correct size.
  */
 struct buf *
-getblk(vp, blkno, size)
-	register struct vnode *vp;
-	daddr_t blkno;
-	int size;
+getblk(register struct vnode *vp, daddr_t blkno, int size)
 {
 	struct buf *bp, *bh;
 	int x;
@@ -422,6 +435,7 @@ getblk(vp, blkno, size)
 			if (bp->b_flags & B_BUSY) {
 				bp->b_flags |= B_WANTED;
 				sleep (bp, PRIBIO);
+				splx(x);
 				continue;
 			}
 			bp->b_flags |= B_BUSY | B_CACHE;
@@ -448,8 +462,7 @@ getblk(vp, blkno, size)
  * Get an empty, disassociated buffer of given size.
  */
 struct buf *
-geteblk(size)
-	int size;
+geteblk(int size)
 {
 	struct buf *bp;
 	int x;
@@ -473,21 +486,33 @@ geteblk(size)
  *
  * Expanded buffer is returned as value.
  */
-struct buf *
-allocbuf(bp, size)
-	register struct buf *bp;
-	int size;
+void
+allocbuf(register struct buf *bp, int size)
 {
 	caddr_t newcontents;
 
 	/* get new memory buffer */
+#ifndef notyet
 	newcontents = (caddr_t) malloc (size, M_TEMP, M_WAITOK);
+#else /* notyet */
+	if (round_page(size) == size)
+		newcontents = (caddr_t) kmem_alloc_wired_wait(buffer_map, size);
+	else
+		newcontents = (caddr_t) malloc (size, M_TEMP, M_WAITOK);
+#endif /* notyet */
 
 	/* copy the old into the new, up to the maximum that will fit */
 	bcopy (bp->b_un.b_addr, newcontents, min(bp->b_bufsize, size));
 
 	/* return old contents to free heap */
+#ifndef notyet
 	free (bp->b_un.b_addr, M_TEMP);
+#else /* notyet */
+	if (round_page(bp->b_bufsize) == bp->b_bufsize)
+		kmem_free_wakeup(buffer_map, bp->b_un.b_addr, bp->b_bufsize);
+	else
+		free (bp->b_un.b_addr, M_TEMP);
+#endif /* notyet */
 
 	/* adjust buffer cache's idea of memory allocated to buffer contents */
 	freebufspace -= size - bp->b_bufsize;
@@ -496,8 +521,6 @@ allocbuf(bp, size)
 	/* update buffer header */
 	bp->b_un.b_addr = newcontents;
 	bp->b_bcount = bp->b_bufsize = size;
-
-	return(bp);
 }
 
 /*
@@ -506,8 +529,8 @@ allocbuf(bp, size)
  * Extract and return any errors associated with the I/O.
  * If an invalid block, force it off the lookup hash chains.
  */
-biowait(bp)
-	register struct buf *bp;
+int
+biowait(register struct buf *bp)
 {
 	int x;
 
@@ -539,15 +562,20 @@ biowait(bp)
  * others biowait()'ing for it will notice when they are
  * woken up from sleep().
  */
-biodone(bp)
-	register struct buf *bp;
+int
+biodone(register struct buf *bp)
 {
 	int x;
 
 	x = splbio();
 	if (bp->b_flags & B_CALL) (*bp->b_iodone)(bp);
 	bp->b_flags &=  ~B_CALL;
-	if (bp->b_flags & B_ASYNC) brelse(bp);
+	if ((bp->b_flags & (B_READ|B_DIRTY)) == B_DIRTY)  {
+		bp->b_flags &=  ~B_DIRTY;
+		vwakeup(bp);
+	}
+	if (bp->b_flags & B_ASYNC)
+		brelse(bp);
 	bp->b_flags &=  ~B_ASYNC;
 	bp->b_flags |= B_DONE;
 	wakeup(bp);

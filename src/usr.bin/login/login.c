@@ -190,6 +190,8 @@ main(argc, argv)
 			rootlogin = 0;
 			instance = "";
 		}
+#else
+		rootlogin = 0;
 #endif
 		if (strlen(username) > UT_NAMESIZE)
 			username[UT_NAMESIZE] = '\0';
@@ -239,6 +241,8 @@ main(argc, argv)
 				rval = strcmp(crypt(p, salt), pwd->pw_passwd);
 			}
 #else
+			if (pwd->pw_uid != 0)
+				rootlogin = 0;
 #ifdef DES
 			rval = strcmp(crypt(p, salt), pwd->pw_passwd);
 #else
@@ -383,9 +387,12 @@ main(argc, argv)
 	if (!quietlog) {
 		struct stat st;
 
-		printf(
-"Copyright (c) 1980,1983,1986,1988,1990,1991 The Regents of the University\n%s",
-"of California.  All rights reserved.\n\n");
+		printf("%s%s",
+			"386BSD Release 0.1 by William and Lynne Jolitz.\n",
+"Copyright (c) 1989,1990,1991,1992 William F. Jolitz. All rights reserved.\n\
+Based in part on work by the 386BSD User Community and the\n\
+BSD Networking Software, Release 2 by UCB EECS Department.\n");
+
 		motd();
 		(void)sprintf(tbuf, "%s/%s", _PATH_MAILDIR, pwd->pw_name);
 		if (stat(tbuf, &st) == 0 && st.st_size != 0)

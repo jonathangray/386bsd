@@ -55,6 +55,7 @@ static char rcsid[] = "$Header: /usr/bill/working/sys/kern/RCS/kern__physio.c,v 
 #include "proc.h"
 #include "malloc.h"
 #include "vnode.h"
+#include "vm/vm.h"
 #include "specdev.h"
 
 static physio(int (*)(), int, int, int, caddr_t, int *, struct proc *);
@@ -85,7 +86,10 @@ static physio(strat, dev, off, rw, base, len, p)
 	struct proc *p;
 {
 	register struct buf *bp;
-	int resid = *len, error;
+	int amttodo = *len, error, amtdone;
+	vm_prot_t ftype;
+	static zero;
+	caddr_t adr;
 
 	rw = rw == UIO_READ ? B_READ : 0;
 
@@ -96,21 +100,32 @@ static physio(strat, dev, off, rw, base, len, p)
 	bp->b_dev = dev;
 	bp->b_error = 0;
 	bp->b_blkno = off/DEV_BSIZE;
+	amtdone = 0;
 
 	/* iteratively do I/O on as large a chunk as possible */
 	do {
 		bp->b_flags &= ~B_DONE;
 		bp->b_un.b_addr = base;
-		/* DMA controller limit */
-		bp->b_bcount = min (64*1024, resid);
-		resid -= bp->b_bcount;
-		off += bp->b_bcount;
+		/* XXX limit */
+		bp->b_bcount = min (256*1024, amttodo);
 
 		/* first, check if accessible */
 		if (rw == B_READ && !useracc(base, bp->b_bcount, B_WRITE))
 			return (EFAULT);
 		if (rw == B_WRITE && !useracc(base, bp->b_bcount, B_READ))
 			return (EFAULT);
+
+		/* update referenced and dirty bits, handle copy objects */
+		if (rw == B_READ)
+			ftype = VM_PROT_READ | VM_PROT_WRITE;
+		else
+			ftype = VM_PROT_READ;
+		for (adr = trunc_page(base) ; adr < base + bp->b_bcount;
+			adr += NBPG) {
+			vm_fault(&curproc->p_vmspace->vm_map,
+				adr, ftype, FALSE);
+			*(int *) adr += zero;
+		}
 
 		/* lock in core */
 		vslock (base, bp->b_bcount);
@@ -120,12 +135,14 @@ static physio(strat, dev, off, rw, base, len, p)
 
 		/* unlock */
 		vsunlock (base, bp->b_bcount, 0);
-		resid += bp->b_resid;
-		bp->b_blkno = off/DEV_BSIZE;
-	} while (resid && (bp->b_flags & B_ERROR) == 0 && bp->b_resid == 0);
+		amtdone = bp->b_bcount - bp->b_resid;
+		amttodo -= amtdone;
+		base += amtdone;
+		bp->b_blkno += amtdone/DEV_BSIZE;
+	} while (amttodo && (bp->b_flags & B_ERROR) == 0 && amtdone > 0);
 
 	error = bp->b_error;
 	free(bp, M_TEMP);
-	*len = resid;
+	*len = amttodo;
 	return (error);
 }

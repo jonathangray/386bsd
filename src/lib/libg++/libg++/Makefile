@@ -43,7 +43,7 @@ SRCS=		AllocRing.cc Obstack.cc File.cc ostream.cc istream.cc \
 		timer.cc compare.cc ctype.cc curses.cc math.cc std.cc
 NOMAN=		noman
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>
 
 #
 # For some reason, pmake won't cut it without this redundant declaration.

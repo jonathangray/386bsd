@@ -240,8 +240,8 @@ kmeminit()
 	npg = VM_KMEM_SIZE/ NBPG;
 	kmemusage = (struct kmemusage *) kmem_alloc(kernel_map,
 		(vm_size_t)(npg * sizeof(struct kmemusage)));
-	kmem_map = kmem_suballoc(kernel_map, (vm_offset_t)&kmembase,
-		(vm_offset_t)&kmemlimit, (vm_size_t)(npg * NBPG), FALSE);
+	kmem_map = kmem_suballoc(kernel_map, (vm_offset_t *)&kmembase,
+		(vm_offset_t *)&kmemlimit, (vm_size_t)(npg * NBPG), FALSE);
 #ifdef KMEMSTATS
 	for (indx = 0; indx < MINBUCKET + 16; indx++) {
 		if (1 << indx >= CLBYTES)

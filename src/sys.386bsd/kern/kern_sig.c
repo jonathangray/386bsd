@@ -543,8 +543,8 @@ trapsignal(p, sig, code)
 	int mask;
 
 	mask = sigmask(sig);
-	if ((p->p_flag & STRC) == 0 && (p->p_sigcatch & mask) != 0 &&
-	    (p->p_sigmask & mask) == 0) {
+	if (p == curproc && (p->p_flag & STRC) == 0 &&
+	    (p->p_sigcatch & mask) != 0 && (p->p_sigmask & mask) == 0) {
 		p->p_stats->p_ru.ru_nsignals++;
 #ifdef KTRACE
 		if (KTRPOINT(p, KTR_PSIG))
@@ -801,7 +801,9 @@ issig(p)
 			psignal(p->p_pptr, SIGCHLD);
 			do {
 				stop(p);
+				(void) splclock();
 				swtch();
+				(void) splnone();
 			} while (!procxmt(p) && p->p_flag&STRC);
 
 			/*
@@ -863,7 +865,9 @@ issig(p)
 				stop(p);
 				if ((p->p_pptr->p_flag & SNOCLDSTOP) == 0)
 					psignal(p->p_pptr, SIGCHLD);
+				(void) splclock();
 				swtch();
+				(void) splnone();
 				break;
 			} else if (prop & SA_IGNORE) {
 				/*
@@ -1057,7 +1061,8 @@ coredump(p)
 		    IO_NODELOCKED|IO_UNIT, cred, (int *) NULL, p);
 	if (error == 0)
 		error = vn_rdwr(UIO_WRITE, vp,
-		    (caddr_t) trunc_page(USRSTACK - ctob(vm->vm_ssize)),
+		    (caddr_t) trunc_page(vm->vm_maxsaddr + MAXSSIZ
+			- ctob(vm->vm_ssize)),
 		    round_page(ctob(vm->vm_ssize)),
 		    (off_t)ctob(UPAGES) + ctob(vm->vm_dsize), UIO_USERSPACE,
 		    IO_NODELOCKED|IO_UNIT, cred, (int *) NULL, p);

@@ -577,9 +577,11 @@ ckverbose:
 			}
 		}
 	}
+#ifdef dontbother
 	/* print number of blocks actually copied */
 	Blocks += ((sBlocks + (BUFSIZE - 1)) / BUFSIZE);
 	(void) fprintf(stderr, "%ld blocks\n", Blocks * (Bufsize>>9));
+#endif
 	exit(0);
 }
 
@@ -626,8 +628,14 @@ getname()		/* get file name, get info for header */
 	long tlong;
 
 	for(;;) {
-		if(gets(namep) == NULL)
+		if (fgets(namep, sizeof Name, stdin) == NULL)
 			return 0;
+		/* zap newline */
+		for (;*namep; namep++)
+			if(*namep == '\n')
+				*namep = 0;
+		namep = Name;
+		
 		while(*namep == '.' && namep[1] == '/') {
 			namep++;
 			while(*namep == '/') namep++;

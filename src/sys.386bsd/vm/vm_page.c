@@ -204,7 +204,7 @@ vm_offset_t vm_page_startup(start, end, vaddr)
 	vaddr = pmap_map(mapped, start, new_start,
 			VM_PROT_READ|VM_PROT_WRITE);
 	start = new_start;
-	blkclr((caddr_t) mapped, vaddr - mapped);
+	bzero((caddr_t) mapped, vaddr - mapped);
 	mapped = vaddr;
 
 	for (i = vm_page_bucket_count; i--;) {
@@ -244,7 +244,7 @@ vm_offset_t vm_page_startup(start, end, vaddr)
 
 	new_start = start + (vaddr - mapped);
 	pmap_map(mapped, start, new_start, VM_PROT_READ|VM_PROT_WRITE);
-	blkclr((caddr_t) mapped, (vaddr - mapped));
+	bzero((caddr_t) mapped, (vaddr - mapped));
 	mapped = vaddr;
 	start = new_start;
 
@@ -283,7 +283,7 @@ vm_offset_t vm_page_startup(start, end, vaddr)
 	/*
 	 *	Clear all of the page structures
 	 */
-	blkclr((caddr_t)m, npages * sizeof(*m));
+	bzero((caddr_t)m, npages * sizeof(*m));
 
 	pa = first_phys_addr;
 	while (npages--) {

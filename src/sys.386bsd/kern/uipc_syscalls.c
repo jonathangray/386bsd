@@ -1191,10 +1191,11 @@ sockargs(mp, buf, buflen, type)
 		return (ENOBUFS);
 	m->m_len = buflen;
 	error = copyin(buf, mtod(m, caddr_t), (u_int)buflen);
-	if (error)
+	if (error) {
 		(void) m_free(m);
-	else
-		*mp = m;
+		return(error);
+	}
+	*mp = m;
 	if (type == MT_SONAME) {
 		register struct sockaddr *sa = mtod(m, struct sockaddr *);
 
@@ -1204,7 +1205,7 @@ sockargs(mp, buf, buflen, type)
 #endif
 		sa->sa_len = buflen;
 	}
-	return (error);
+	return (0);
 }
 
 getsock(fdp, fdes, fpp)

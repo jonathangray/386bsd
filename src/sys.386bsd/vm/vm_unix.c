@@ -107,12 +107,12 @@ grow(p, sp)
 	/*
 	 * For common case of already allocated (from trap).
 	 */
-	if (sp >= USRSTACK - ctob(vm->vm_ssize))
+	if (sp >= (unsigned)vm->vm_maxsaddr + MAXSSIZ - ctob(vm->vm_ssize))
 		return (1);
 	/*
 	 * Really need to check vs limit and increment stack size if ok.
 	 */
-	si = clrnd(btoc(USRSTACK-sp) - vm->vm_ssize);
+	si = clrnd(btoc(vm->vm_maxsaddr + MAXSSIZ - sp) - vm->vm_ssize);
 	if (vm->vm_ssize + si > btoc(p->p_rlimit[RLIMIT_STACK].rlim_cur))
 		return (0);
 	vm->vm_ssize += si;

@@ -5,4 +5,4 @@ SRCS=	libmain.c
 LINKS=	${LIBDIR}/libln.a ${LIBDIR}/libl.a \
 	${LIBDIR}/libln_p.a ${LIBDIR}/libl_p.a
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

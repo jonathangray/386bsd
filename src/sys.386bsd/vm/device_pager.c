@@ -167,7 +167,7 @@ dev_pager_alloc(handle, size, prot)
 		/*
 		 * Finally, put it on the managed list so other can find it.
 		 */
-		queue_enter(&dev_pager_list, devp, dev_pager_t, devp_list);
+		queue_enter(&dev_pager_list, pager, vm_pager_t, pg_list);
 #ifdef DEBUG
 		if (dpagerdebug & DDB_ALLOC)
 			printf("dev_pager_alloc: pages %d@%x\n",
@@ -204,7 +204,7 @@ dev_pager_dealloc(pager)
 	if (dpagerdebug & DDB_FOLLOW)
 		printf("dev_pager_dealloc(%x)\n", pager);
 #endif
-	queue_remove(&dev_pager_list, devp, dev_pager_t, devp_list);
+	queue_remove(&dev_pager_list, pager, vm_pager_t, pg_list);
 	object = devp->devp_object;
 #ifdef DEBUG
 	if (dpagerdebug & DDB_ALLOC)
@@ -216,6 +216,7 @@ dev_pager_dealloc(pager)
 	kmem_free(kernel_map, devp->devp_pages,
 		  devp->devp_npages * sizeof(struct vm_page));
 	free((caddr_t)devp, M_VMPGDATA);
+	free((caddr_t)pager, M_VMPAGER);
 	pager->pg_data = 0;
 }
 

@@ -46,23 +46,24 @@
 #define NE7_RQM	0x80	/* Diskette Controller ReQuest for Master */
 
 /* Status register ST0 */
-#define NE7_ST0BITS	"\020\010invalid\007abnormal\006seek complete\005drive check\004drive_rdy\003top head\002unit_sel1\001unit_sel0"
+#define NE7_ST0BITS	"\020\010invld\007abnrml\006seek_cmplt\005drv_chck\004drive_rdy\003top_head"
 
 /* Status register ST1 */
 #define NE7_ST1BITS	"\020\010end_of_cyl\006bad_crc\005data_overrun\003sec_not_fnd\002write_protect\001no_am"
 
 /* Status register ST2 */
-#define NE7_ST2BITS	"\020\007control_mark\006bad_crc\005wrong_cyl\004scan_equal\003scan_not_found\002bad_cyl\001no_dam"
+#define NE7_ST2BITS	"\020\007ctrl_mrk\006bad_crc\005wrong_cyl\004scn_eq\003scn_not_fnd\002bad_cyl\001no_dam"
 
 /* Status register ST3 */
-#define NE7_ST3BITS	"\020\010fault\007write_protect\006drdy\005tk0\004two_side\003side_sel\002unit_sel1\0012unit_sel0"
+#define NE7_ST3BITS	"\020\010fault\007write_protect\006drdy\005tk0\004two_side\003side_sel\002"
 
 /* Commands */
-#define NE7CMD_SENSED	2	/*  sense drive - requires unit select byte */
 #define NE7CMD_SPECIFY	3	/*  specify drive parameters - requires unit
 					parameters byte */
-#define NE7CMD_WRITE	5	/*  write - requires eight additional bytes */
-#define NE7CMD_READ	6	/*  read - requires eight additional bytes */
+#define NE7CMD_SENSED	4	/*  sense drive - requires unit select byte */
+#define NE7CMD_WRITE	0xc5	/*  write - requires eight additional bytes */
+#define NE7CMD_READ	0xe6	/*  read - requires eight additional bytes */
+#define NE7CMD_FORMAT	0x4c	/*  format - requires five additional bytes */
 #define NE7CMD_RECAL	7	/*  recalibrate drive - requires
 					unit select byte */
 #define NE7CMD_SENSEI	8	/*  sense controller interrupt status */

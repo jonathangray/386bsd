@@ -379,8 +379,10 @@ maketypelist(fslist)
 			av[i++] = MOUNT_NFS;
 		else if (strcmp(fslist, "mfs") == 0)
 			av[i++] = MOUNT_MFS;
-		else if (strcmp(fslist, "pc") == 0)
-			av[i++] = MOUNT_PC;
+		else if (strcmp(fslist, "msdos") == 0)
+			av[i++] = MOUNT_MSDOS;
+		else if (strcmp(fslist, "isofs") == 0)
+			av[i++] = MOUNT_ISOFS;
 	}
 	av[i++] = 0;
 	return(av);

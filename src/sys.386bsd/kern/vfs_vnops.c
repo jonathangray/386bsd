@@ -183,6 +183,7 @@ vn_close(vp, flags, cred, p)
 
 /*
  * Package up an I/O request on a vnode into a uio and do it.
+ * [internal interface to file i/o for kernel only]
  */
 vn_rdwr(rw, vp, base, len, offset, segflg, ioflg, cred, aresid, p)
 	enum uio_rw rw;

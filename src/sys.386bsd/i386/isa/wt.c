@@ -302,17 +302,26 @@ register struct buf *bp;
 #ifdef DEBUG
 	debug("bpaddr %x\n", adr1);
 #endif
-	ucnt1 = bp->b_bcount;
+	ucnt1 = bp->b_bcount % NBPG;
 	ucnt2 = 0;
 	adr2 = 0;
 #ifdef DEBUG
 	debug("WTstart: adr1 %lx cnt %x\n", adr1, ucnt1);
 #endif
+	/* 64K boundary? (XXX) */
 	if (ftoseg(adr1) != ftoseg(adr1 + (unsigned) ucnt1 - 1))
 	{
 		adr2 = (adr1 & 0xffff0000L) + 0x10000L;
 		ucnt2 = (adr1 + ucnt1) - adr2;
 		ucnt1 -= ucnt2;
+	}
+	/* page boundary? */
+	if (trunc_page(adr1) != trunc_page(adr1 + (unsigned) ucnt1 - 1))
+	{ unsigned u;
+		u = NBPG - ((unsigned)bp->b_un.b_addr & (NBPG-1));
+		adr2 = kvtop(bp->b_un.b_addr + u);
+		ucnt2 = ucnt1 - u;
+		ucnt1 = u;
 	}
 	/* at file marks and end of tape, we just return '0 bytes available' */
 	if (wtflags & TPVOL) {
@@ -535,7 +544,7 @@ int	dev, flag;
 #ifdef DEBUG
 		debug("Waiting for rew to finish\n");
 #endif
-		delay(1000000);	/* delay one second */
+		DELAY(1000000);	/* delay one second */
 	}
 	/* Only do reset and select when tape light is off, and tape is rewound.
 	 * This allows multiple volumes. */
@@ -562,6 +571,7 @@ int	dev, flag;
 		wtflags |= TPWRITE;
 	rwtbuf.b_flags = 0;
 	myproc = curproc;		/* for comparison */
+#ifdef not
 	switch(TP_DENS(dev)) {
 case 0:
 cmds(0x28);
@@ -575,6 +585,7 @@ break;
 case 3:
 cmds(0x24);
 	}
+#endif
 	return(0);
 }
 
@@ -793,7 +804,7 @@ rdyexc(ticks)
 		if (!(s & READY))	/* check if controller is ready */
 			break;
 		s = splbio();
-		delay((ticks/HZ)*1000000); /* */
+		DELAY((ticks/HZ)*1000000); /* */
 		splx(s);
 	}
 #ifdef DEBUG
@@ -1003,7 +1014,7 @@ t_reset()
 	register i;
 	mbits |= RESET;
 	outb(CTLPORT, mbits);		/* send reset */
-	delay(20);
+	DELAY(20);
 	mbits &= ~RESET;
 	outb(CTLPORT, mbits);		/* turn off reset */
 	if ((inb(STATPORT) & RESETMASK) == RESETVAL)
@@ -1114,16 +1125,6 @@ wtlinit()
 	dma_write = wtchan+0x48;
 	dma_read = wtchan+0x44;
 	dmareg = wtchan+wtchan;
-}
-
-/*
- * delay i microseconds
- */
-delay(i)
-register int i;
-{
-	while (i-- > 0)
-		DELAY(1000);
 }
 
 wtsize()

@@ -7,4 +7,4 @@ CFLAGS+=-DDEBUG -DLIBC_SCCS
 
 SRCS=gethostnamadr.c res_mkquery.c res_query.c res_send.c
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

@@ -1,6 +1,7 @@
 #	from: @(#)Makefile	7.9 (Berkeley) 5/8/91
 
 DESTDIR=/
+LD=/usr/bin/ld
 STAND=	/sys/stand
 INCPATH=-I/sys/sys -I/sys -I/sys/ufs  -I${STAND}
 VPATH=	${STAND}
@@ -9,16 +10,16 @@ STANDDIR= ${DESTDIR}/stand
 CC=	cc -traditional
 CPP=	cpp -traditional ${INCPATH} -DSTANDALONE -DAT386
 
-RELOC=	70000
-RELOC2=	70200
+RELOC=	98000
+RELOC2=	98200
 
 CFLAGS=	-DSTANDALONE -DAT386 -O ${INCPATH}
 
-DRIVERS=cga.c fd.c kbd.c wd.c
+DRIVERS=cga.c fd.c kbd.c wd.c as.c
 SRCS=	boot.c fdbootblk.c prf.c \
 	srt0.c wdbootblk.c ${DRIVERS} ${SASRC}
 
-ALL= wdboot bootwd fdboot bootfd
+ALL= wdboot bootwd fdboot bootfd asboot bootas
 
 all: ${ALL}
 
@@ -42,34 +43,45 @@ wdbootblk.o: wdbootblk.c
 fdbootblk.o: fdbootblk.c 
 	${CPP} -E -DLOCORE -DRELOC=0x${RELOC} fdbootblk.c | ${AS} -o $@
 
+asbootblk.o: asbootblk.c 
+	cc -c -O -DRELOC=0x${RELOC} ${INCPATH} asbootblk.c
+
 # getting booted from disc
 
 wdboot: wdbootblk.o
-	ld -N -T ${RELOC} wdbootblk.o
-	cp a.out wdb
+	${LD} -N -T ${RELOC} wdbootblk.o
 	rm -f $@; strip a.out; trimhd 32 <a.out >$@; rm -f a.out; ls -l $@
 
 bootwd:	wsrt0.o boot.o bmap.o cga.o fs.o kbd.o prf.o wd.o printf.o breadwd.o
-	ld -N -T ${RELOC2} wsrt0.o boot.o bmap.o cga.o kbd.o prf.o printf.o \
+	${LD} -N -T ${RELOC2} wsrt0.o boot.o bmap.o cga.o kbd.o prf.o printf.o \
 		breadwd.o fs.o wd.o -lc
 	size a.out
-	cp a.out bwd
 	rm -f $@; strip a.out; trimhd 32 <a.out >$@; rm -f a.out; ls -l $@
 
 fdboot: fdbootblk.o
-	ld -N -T ${RELOC} fdbootblk.o
-	cp a.out fdb
+	${LD} -N -T ${RELOC} fdbootblk.o
 	rm -f $@; strip a.out; trimhd 32 <a.out >$@; rm -f a.out; ls -l $@
 
 bootfd:	wsrt0.o boot.o bmap.o cga.o fs.o kbd.o prf.o fd.o printf.o breadfd.o
-	ld -N -T ${RELOC2} wsrt0.o boot.o bmap.o cga.o kbd.o prf.o printf.o \
+	${LD} -N -T ${RELOC2} wsrt0.o boot.o bmap.o cga.o kbd.o prf.o printf.o \
 		breadfd.o fs.o fd.o -lc
 	size a.out
-	cp a.out bfd
 	rm -f $@; strip a.out; trimhd 32 <a.out >$@; rm -f a.out; ls -l $@
+
+asboot:	asbootblk.o
+	${LD} -N -T 7c00 asbootblk.o
+	rm -f $@; strip a.out; trimhd 32 <a.out >$@; rm -f a.out; ls -l $@
+
+bootas:	wsrt0.o boot.o bmap.o cga.o fs.o kbd.o prf.o as.o printf.o breadas.o
+	${LD} -N -T ${RELOC2} wsrt0.o boot.o bmap.o cga.o kbd.o prf.o printf.o \
+		breadas.o fs.o as.o -lc
+	size a.out
+	rm -f $@; strip a.out; trimhd 32 <a.out >$@; rm -f a.out; ls -l $@
+
 
 breadwd.o: breadwd.c breadxx.o
 breadfd.o: breadfd.c breadxx.o
+breadas.o: breadas.c breadxx.o
 
 breadxx.o:
 	touch breadxx.o
@@ -82,14 +94,15 @@ breadfd.c: breadxx.c
 	rm -f breadfd.c
 	sed -e 's/XX/fd/' -e 's/xx/fd/g'	< breadxx.c >> breadfd.c
 
+breadas.c: breadxx.c
+	rm -f breadas.c
+	sed -e 's/XX/as/' -e 's/xx/as/g'	< breadxx.c >> breadas.c
+
 clean:
-	rm -f *.o *.exe *.i sm_*.c libdrive.a
+	rm -f *.o *.exe *.i sm_*.c
 	rm -f a.out bfd bwd fdb wdb ${ALL}
 	rm -f boot[a-wyz]? boot[a-wyz]?? boot[a-wyz]?.c boot[a-wyz]??.c \
-		conf[a-wyz]?.c conf[a-wyz]??.c
-	rm -f format core sboot bootconf.c
-	cd libsa; make cleandir
-	cd libsmsa; make cleandir
+		conf[a-wyz]?.c conf[a-wyz]??.c bread[a-wyz]?.c
 
 cleandir: clean
 	rm -f ${MAN} tags .depend

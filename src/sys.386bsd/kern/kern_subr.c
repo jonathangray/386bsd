@@ -185,7 +185,7 @@ strcpy(to, from)
 	register char *to, *from;
 {
 
-	for (; *from = *to; ++from, ++to)
+	for (; *to = *from; ++from, ++to)
 		;
 }
 

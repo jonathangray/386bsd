@@ -153,9 +153,14 @@ union wet_status {
 /*
  * General constant definitions
  */
-#define	WD_STARLAN	0x02		/* WD8003S Identification	*/
-#define	WD_ETHER	0x03		/* WD8003E Identification	*/
-#define	WD_ETHER2	0x05		/* WD8003EBT Identification	*/
+
+/* Bits in the REGE register */
+#define	WD_MICROCHANEL	0x80	/* Microchannel bus (vs. isa) */
+#define	WD_LARGERAM	0x40    /* Large RAM */
+#define	WD_SOFTCONFIG   0x20	/* Soft config */
+#define	WD_REVMASK	0x1e	/* Revision mask */
+#define WD_ETHERNET	0x01	/* Ethernet (vs. Starlan) */
+
 #define WD_CHECKSUM	0xFF		/* Checksum byte		*/
 #define WD_PAGE_SIZE	256		/* Size of RAM pages in bytes	*/
 #define WD_TXBUF_SIZE	6		/* Size of TX buffer in pages	*/

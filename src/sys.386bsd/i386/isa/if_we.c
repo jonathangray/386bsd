@@ -76,12 +76,14 @@
 #include "netns/ns_if.h"
 #endif
 
+#include "i386/isa/isa.h"
 #include "i386/isa/if_wereg.h"
 #include "i386/isa/isa_device.h"
+#include "i386/isa/icu.h"
  
 /*
  * This constant should really be 60 because the we adds 4 bytes of crc.
- * However when set to 60 our packets are ignored by deuna's , 3coms are
+ * However when set to 60 our packets are ignored by deunas , 3coms are
  * okay ??????????????????????????????????????????
  */
 #define ETHER_MIN_LEN 64
@@ -122,8 +124,11 @@ struct	isa_driver wedriver = {
 	weprobe, weattach, "we",
 };
  
+static unsigned short wemask[] =
+	{ IRQ9, IRQ3, IRQ5, IRQ7, IRQ10, IRQ11, IRQ15, IRQ4 };
+	
 /*
- * Probe the WD8003 to see if it's there
+ * Probe the WD8003 to see if its there
  */
 weprobe(is)
 	struct isa_device *is;
@@ -133,6 +138,13 @@ weprobe(is)
 	union we_mem_sel wem;
 	u_char sum;
  
+	/* reset card to force it into a known state. */
+	outb(is->id_iobase, 0x80);
+	DELAY(100);
+	outb(is->id_iobase, 0x00);
+	/* wait in the case this card is reading it's EEROM */
+	DELAY(5000);
+
 	/*
 	 * Here we check the card ROM, if the checksum passes, and the
 	 * type code and ethernet address check out, then we know we have
@@ -145,9 +157,21 @@ weprobe(is)
 	if (sum != WD_CHECKSUM)
             return (0);
 	sc->we_type = inb(is->id_iobase + WD_ROM_OFFSET + 6);
-	if ((sc->we_type != WD_ETHER) && (sc->we_type != WD_STARLAN)
-	&& (sc->we_type != WD_ETHER2))
+#ifdef nope
+	if ((sc->we_type & WD_REVMASK) != 2		/* WD8003E or WD8003S */
+		&& (sc->we_type & WD_REVMASK) != 4	/* WD8003EBT */
+		&& (sc->we_type & WD_REVMASK) != 6)        /* WD8003ELB? */
             return (0);
+#endif
+/*printf("type %x ", sc->we_type);*/
+	if (sc->we_type & WD_SOFTCONFIG) {
+		int iv = inb(is->id_iobase + 1) & 4 |
+			((inb(is->id_iobase+4) & 0x60) >> 5);
+/*printf("iv %d ", iv);*/
+		if (wemask[iv] != is->id_irq)
+			return(0);
+		outb(is->id_iobase+4, inb(is->id_iobase+4) | 0x80);
+	}
 
 	/*
 	 * Setup card RAM area and i/o addresses
@@ -170,8 +194,7 @@ weprobe(is)
 	/*
 	 * Mapin interface memory, setup memory select register
 	 */
-	/* wem.ms_addr = (u_long)sc->we_vmem_addr >> 13; */
-	wem.ms_addr = (u_long)(0xd0000)>> 13;
+        wem.ms_addr = kvtop(sc->we_vmem_addr) >> 13;
 	wem.ms_enable = 1;
 	wem.ms_reset = 0;
 	outb(sc->we_io_ctl_addr, wem.ms_byte);
@@ -227,7 +250,7 @@ weattach(is)
 	 * Banner...
 	 */
 	printf(" %s address %s",
-		((sc->we_type != WD_STARLAN) ? "ethernet" : "starlan"),
+		(sc->we_type & WD_ETHERNET) ? "ethernet" : "starlan",
 		ether_sprintf(sc->we_addr));
 }
  
@@ -541,65 +564,6 @@ outofbufs:
 Bdry = bnry;
 }
 
-#ifdef shit
-/*
- * Process an ioctl request.
- */
-weioctl(ifp, cmd, data)
-	register struct ifnet *ifp;
-	int cmd;
-	caddr_t data;
-{
-	struct we_softc *sc = &we_softc[ifp->if_unit];
-	struct ifaddr *ifa = (struct ifaddr *)data;
-	int s = splimp(), error = 0;
- 
-	switch (cmd) {
- 
-	case SIOCSIFADDR:
-		ifp->if_flags |= IFF_UP;
-		weinit(ifp->if_unit);
-		switch(ifa->ifa_addr->sa_family) {
-#ifdef INET
-		case AF_INET:
-			((struct arpcom *)ifp)->ac_ipaddr =
-				IA_SIN(ifa)->sin_addr;
-			arpwhohas((struct arpcom *)ifp, &IA_SIN(ifa)->sin_addr);
-			break;
-#endif
-#ifdef NS
-		case AF_NS:
-		    {
-			register struct ns_addr *ina = &(IA_SNS(ifa)->sns_addr);
-			
-			if (ns_nullhost(*ina))
-				ina->x_host = *(union ns_host *)(sc->we_addr);
-			else
-				wesetaddr(ina->x_host.c_host, ifp->if_unit);
-			break;
-		    }
-#endif
-		}
-		break;
-
-	case SIOCSIFFLAGS:
-		if (((ifp->if_flags & IFF_UP) == 0) &&
-		   (sc->we_flags & WDF_RUNNING)) {
-			westop(ifp->if_unit);
-		} else if (((ifp->if_flags & IFF_UP) == IFF_UP) &&
-		   ((sc->we_flags & WDF_RUNNING) == 0))
-			weinit(ifp->if_unit);
-		break;
-
-	default:
-		error = EINVAL;
- 
-	}
-	(void) splx(s);
-	return (error);
-}
-#endif
- 
 /*
  * Process an ioctl request.
  */
@@ -637,7 +601,7 @@ weioctl(ifp, cmd, data)
 				ina->x_host = *(union ns_host *)(sc->ns_addr);
 			else {
 				/* 
-				 * The manual says we can't change the address 
+				 * The manual says we cant change the address 
 				 * while the receiver is armed,
 				 * so reset everything
 				 */

@@ -253,7 +253,7 @@ rip_usrreq(so, req, m, nam, rights, control)
 		return (0);
 	    }
 	}
-	error =  raw_usrreq(so, req, m, nam, rights, control);
+	error =  raw_usrreq(so, req, m, nam, control);
 
 	if (error && (req == PRU_ATTACH) && so->so_pcb)
 		free(so->so_pcb, M_PCB);

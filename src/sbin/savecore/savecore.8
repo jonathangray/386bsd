@@ -36,7 +36,7 @@
 .Os BSD 4
 .Sh NAME
 .Nm savecore
-.Nd "save a core dump of the operating system"
+.Nd "save the details of a crash of the operating system"
 .Sh SYNOPSIS
 .Nm savecore
 .Ar dirname
@@ -48,8 +48,15 @@ is meant to be called near the end of the initialization file
 (see
 .Xr rc 8 ) .
 Its function
-is to save the core dump of the system (assuming one was made) and to
-write a reboot message in the shutdown log.
+is to detect the presence and save the state of the operating
+system's previous abnormal termination, assuming the state was recorded
+for this purpose. If this state information is found,
+.Nm savecore
+will also write a reboot message in the shutdown log.
+The state information is a snapshot of all RAM memory at the time
+of abnormal termination, untranslated by the processor's memory management
+unit, in physical rather than virtual order (like the memory device, see
+.Xr mem 4 ).
 .Pp
 Operands supported by
 .Nm savecore :
@@ -58,26 +65,27 @@ Operands supported by
 The directory name where the core dump will be written.
 .It Ar system
 If the core dump was from a system other than
-.Pa /vmunix ,
+.Pa /386bsd ,
 the name
 of that system must be supplied as
 .Ar system .
 .El
 .Pp
 .Nm Savecore
-checks the core dump to be certain it corresponds with the
-current running unix.  If the core dump is current, it saves the core
-image in
-.Ar dirname Ns Pa /vmcore.n
-and the namelist
+looks for a physical RAM memory image of the current system
+(currently recorded during system crashes in the
+system's swap space) and it checks the image for veracity.
+If the saved memory image is valid, it saves this in
+.Ar dirname Ns Pa /ram.n
+and the current version of the operating system's executable file
 in
-.Ar dirname Ns Pa /vmunix.n
+.Ar dirname Ns Pa /system.n
 Sequence numbers are incremented and appended to the end of the pathnames
 each time
 .Nm savecore
 is run in the directory.
 .Pp
-Before savecore writes out a core image, it reads a number from the file
+Before savecore writes out a memory image, it reads a number from the file
 .Ar dirname Ns Pa /minfree .
 If the number of free kilobytes on the filesystem which contains
 .Ar dirname
@@ -95,10 +103,10 @@ If the system crashed as a result of a panic,
 .Nm savecore
 logs the panic string too.
 .Sh FILES
-.Bl -tag -width /vmunixxx -compact
-.It Pa /vmunix
+.Bl -tag -width /386bsd -compact
+.It Pa /386bsd
 current
-.Tn UNIX
+.Tn system executable file
 .El
 .Sh BUGS
 Can be fooled into thinking a core dump is the wrong size.

@@ -93,6 +93,7 @@
 typedef	void (*sig_t) __P((int));
 #endif
 
+typedef void (*__sighandler_t) __P((int));
 typedef unsigned int sigset_t;
 
 __BEGIN_DECLS
@@ -113,7 +114,7 @@ __END_DECLS
  * Signal vector "template" used in sigaction call.
  */
 struct	sigaction {
-	void	(*sa_handler)();	/* signal handler */
+	__sighandler_t  sa_handler;     /* signal handler */
 	sigset_t sa_mask;		/* signal mask to apply */
 	int	sa_flags;		/* see signal options below */
 };
@@ -184,17 +185,18 @@ struct	sigcontext {
  */
 #define sigmask(m)	(1 << ((m)-1))
 
-#define	BADSIG		(void (*)())-1
+#define	BADSIG		((__sighandler_t) -1)
 #endif	/* _POSIX_SOURCE */
-
-#define	SIG_DFL		(void (*)())0
-#define	SIG_IGN		(void (*)())1
+  
+#define	SIG_DFL		((__sighandler_t) 0)
+#define	SIG_IGN		((__sighandler_t) 1)
 
 #ifndef KERNEL
 #include <sys/types.h>
 
 __BEGIN_DECLS
-void	(*signal __P((int, void (*) __P((int))))) __P((int));
+/*void	(*signal __P((int, void (*) __P((int))))) __P((int));*/
+__sighandler_t signal __P((int, __sighandler_t));
 int	raise __P((int));
 #ifndef	_ANSI_SOURCE
 int	kill __P((pid_t, int));

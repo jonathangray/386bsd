@@ -143,12 +143,6 @@
 #define i386_btop(x)		((unsigned)(x) >> PGSHIFT)
 #define i386_ptob(x)		((unsigned)(x) << PGSHIFT)
 
-#ifdef KERNEL
-#ifndef LOCORE
-int	cpuspeed;
-#endif
-#define	DELAY(n)	{ register int N = cpuspeed * (n); while (--N > 0); }
-
-#else
-#define	DELAY(n)	{ register int N = (n); while (--N > 0); }
+#ifndef KERNEL
+#define	DELAY(n)	{ volatile int N = (n); while (--N > 0); }
 #endif

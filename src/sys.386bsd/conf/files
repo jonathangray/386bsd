@@ -98,6 +98,7 @@ net/if.c		standard
 net/if_ethersubr.c	optional ether
 net/if_loop.c		optional loop
 net/if_sl.c		optional sl
+net/if_tun.c		optional tun device-driver
 net/raw_cb.c		standard
 net/raw_usrreq.c	standard
 net/radix.c		standard
@@ -191,3 +192,25 @@ netccitt/pk_output.c	optional ccitt
 netccitt/pk_subr.c	optional ccitt
 netccitt/pk_timer.c	optional ccitt
 netccitt/pk_usrreq.c	optional ccitt
+isofs/isofs_bmap.c	optional isofs
+isofs/isofs_lookup.c	optional isofs
+isofs/isofs_node.c	optional isofs
+isofs/isofs_util.c	optional isofs
+isofs/isofs_vfsops.c	optional isofs
+isofs/isofs_vnops.c	optional isofs
+ddb/db_access.c		optional ddb
+ddb/db_aout.c		optional ddb
+ddb/db_break.c		optional ddb
+ddb/db_command.c	optional ddb
+ddb/db_examine.c	optional ddb
+ddb/db_expr.c		optional ddb
+ddb/db_input.c		optional ddb
+ddb/db_lex.c		optional ddb
+ddb/db_output.c		optional ddb
+ddb/db_print.c		optional ddb
+ddb/db_run.c		optional ddb
+ddb/db_sym.c		optional ddb
+ddb/db_trap.c		optional ddb
+ddb/db_variables.c	optional ddb
+ddb/db_watch.c		optional ddb
+ddb/db_write_cmd.c	optional ddb

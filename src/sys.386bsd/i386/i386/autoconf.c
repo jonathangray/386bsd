@@ -105,9 +105,11 @@ extern int Maxmem;
 		if (d > nblkdev) break;
 		if (bdevsw[d].d_psize) {
 			nblks = (*bdevsw[d].d_psize)(swp->sw_dev);
-			if (nblks != -1 &&
+			if (nblks > 0 &&
 			    (swp->sw_nblks == 0 || swp->sw_nblks > nblks))
 				swp->sw_nblks = nblks;
+			else
+				swp->sw_nblks = 0;
 		}
 		swp->sw_nblks = ctod(dtoc(swp->sw_nblks));
 	}
@@ -127,7 +129,7 @@ static	char devname[][2] = {
 	's','w',	/* 1 = sw */
 	'f','d',	/* 2 = fd */
 	'w','t',	/* 3 = wt */
-	'x','d',	/* 4 = xd */
+	'a','s',	/* 4 = as */
 };
 
 #define	PARTITIONMASK	0x7
@@ -171,6 +173,7 @@ setroot()
 	for (swp = swdevt; swp->sw_dev; swp++) {
 		if (majdev == major(swp->sw_dev) &&
 		    mindev == (minor(swp->sw_dev) & ~PARTITIONMASK)) {
+
 			temp = swdevt[0].sw_dev;
 			swdevt[0].sw_dev = swp->sw_dev;
 			swp->sw_dev = temp;

@@ -129,11 +129,21 @@ struct	buf bfreelist[BQUEUES];	/* heads of available lists */
 struct	buf bswlist;		/* head of free swap header list */
 struct	buf *bclnlist;		/* head of cleaned page list */
 
-struct	buf *getblk();
-struct	buf *geteblk();
-struct	buf *getnewbuf();
+void bufinit();
+int bread(struct vnode *, daddr_t, int, struct ucred *, struct buf **);
+int breada(struct vnode *, daddr_t, int, daddr_t, int, struct ucred *,
+	struct buf **);
+int bwrite(struct buf *);
+void bawrite(struct buf *);
+void bdwrite(struct buf *);
+void brelse(struct buf *);
+struct buf *incore(struct vnode *, daddr_t);
+struct buf *getblk(struct vnode *, daddr_t, int);
+struct buf *geteblk(int);
+int biowait(struct buf *);
+int biodone(struct buf *);
+void allocbuf(struct buf *, int);
 
-unsigned minphys();
 #endif
 
 /*
@@ -151,8 +161,8 @@ unsigned minphys();
 #define	B_ASYNC		0x000100	/* don't wait for I/O completion */
 #define	B_DELWRI	0x000200	/* write at exit of avail list */
 #define	B_TAPE		0x000400	/* this is a magtape (no bdwrite) */
-#define	B_UAREA		0x000800	/* add u-area to a swap operation */
-#define	B_PAGET		0x001000	/* page in/out of page table space */
+#define	B_VMPAGE	0x000800	/* buffer from virtual memory */
+#define	B_MALLOC	0x001000	/* buffer from malloc space */
 #define	B_DIRTY		0x002000	/* dirty page to be pushed out async */
 #define	B_PGIN		0x004000	/* pagein op, so swap() can count it */
 #define	B_CACHE		0x008000	/* did bread find us in the cache ? */
@@ -205,7 +215,7 @@ unsigned minphys();
  * Zero out a buffer's data portion.
  */
 #define	clrbuf(bp) { \
-	blkclr((bp)->b_un.b_addr, (unsigned)(bp)->b_bcount); \
+	bzero((bp)->b_un.b_addr, (unsigned)(bp)->b_bcount); \
 	(bp)->b_resid = 0; \
 }
 #define B_CLRBUF	0x1	/* request allocated buffer be cleared */

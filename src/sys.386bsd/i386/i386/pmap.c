@@ -210,7 +210,6 @@ struct msgbuf	*msgbufp;
  */
 struct pte *pmap_pte();
 
-extern vm_offset_t	atdevbase;
 void
 pmap_bootstrap(firstaddr, loadaddr)
 	vm_offset_t firstaddr;
@@ -230,7 +229,7 @@ extern int IdlePTD;
 	avail_end -= i386_round_page(sizeof(struct msgbuf));
 
 	mem_size = physmem << PG_SHIFT;
-	virtual_avail = atdevbase + 0x100000 - 0xa0000 + 10*NBPG;
+	virtual_avail = (vm_offset_t)atdevbase + 0x100000 - 0xa0000 + 10*NBPG;
 	virtual_end = VM_MAX_KERNEL_ADDRESS;
 	i386pagesperpage = PAGE_SIZE / I386_PAGE_SIZE;
 
@@ -286,6 +285,18 @@ extern int IdlePTD;
 	SYSMAP(struct msgbuf *	,msgbufmap	,msgbufp   ,1		)
 	virtual_avail = va;
 #endif
+	/*
+	 * reserve special hunk of memory for use by bus dma as a bounce
+	 * buffer (contiguous virtual *and* physical memory). for now,
+	 * assume vm does not use memory beneath hole, and we know that
+	 * the bootstrap uses top 32k of base memory. -wfj
+	 */
+	{
+		extern vm_offset_t isaphysmem;
+	isaphysmem = va;
+
+	virtual_avail = pmap_map(va, 0xa0000 - 32*1024, 0xa0000, VM_PROT_ALL);
+	}
 
 	*(int *)PTD = 0;
 	load_cr3(rcr3());
@@ -591,7 +602,7 @@ pmap_remove(pmap, sva, eva)
 			*(int *)pte++ = 0;
 			/*TBIS(va + ix * I386_PAGE_SIZE);*/
 		} while (++ix != i386pagesperpage);
-		if (pmap == &curproc->p_vmspace->vm_pmap)
+		if (curproc && pmap == &curproc->p_vmspace->vm_pmap)
 			pmap_activate(pmap, (struct pcb *)curproc->p_addr);
 		/* are we current address space or kernel? */
 		/*if (pmap->pm_pdir[PTDPTDI].pd_pfnum == PTDpde.pd_pfnum
@@ -781,7 +792,7 @@ pmap_protect(pmap, sva, eva, prot)
 			/*TBIS(va + ix * I386_PAGE_SIZE);*/
 		} while (++ix != i386pagesperpage);
 	}
-	if (pmap == &curproc->p_vmspace->vm_pmap)
+	if (curproc && pmap == &curproc->p_vmspace->vm_pmap)
 		pmap_activate(pmap, (struct pcb *)curproc->p_addr);
 }
 
@@ -939,8 +950,8 @@ pmap_enter(pmap, va, pa, prot, wired)
 			if (!npv->pv_next)
 				enter_stats.secondpv++;
 #endif
-		splx(s);
 		}
+		splx(s);
 	}
 	/*
 	 * Assumption: if it is not part of our managed memory
@@ -1578,7 +1589,7 @@ pmap_changebit(pa, bit, setem)
 				pte++;
 			} while (++ix != i386pagesperpage);
 
-			if (pv->pv_pmap == &curproc->p_vmspace->vm_pmap)
+			if (curproc && pv->pv_pmap == &curproc->p_vmspace->vm_pmap)
 				pmap_activate(pv->pv_pmap, (struct pcb *)curproc->p_addr);
 		}
 #ifdef somethinglikethis

@@ -181,6 +181,11 @@ struct disklabel {
 #define	DTYPE_ST506		6		/* ST506 etc. */
 #define	DTYPE_FLOPPY		10		/* floppy */
 
+/* d_subtype values: */
+#define DSTYPE_INDOSPART	0x8		/* is inside dos partition */
+#define  DSTYPE_DOSPART(s)	 ((s) & 3)	 /* dos partition number */
+#define DSTYPE_GEOMETRY		0x10		/* drive params in label */
+
 #ifdef DKTYPENAMES
 static char *dktypenames[] = {
 	"unknown",
@@ -238,6 +243,7 @@ static char *fstypenames[] = {
 #define		D_BADSECT	0x04		/* supports bad sector forw. */
 #define		D_RAMDISK	0x08		/* disk emulator */
 #define		D_CHAIN		0x10		/* can do back-back transfers */
+#define		D_DOSPART	0x20		/* within MSDOS partition */
 
 /*
  * Drive data for SMD.
@@ -283,6 +289,29 @@ struct partinfo {
 	struct partition *part;
 };
 
+/* DOS partition table -- located in boot block */
+
+#define	DOSBBSECTOR	0	/* DOS boot block relative sector number */
+#define	DOSPARTOFF	446
+#define NDOSPART	4
+
+struct dos_partition {
+	unsigned char	dp_flag;	/* bootstrap flags */
+	unsigned char	dp_shd;		/* starting head */
+	unsigned char	dp_ssect;	/* starting sector */
+	unsigned char	dp_scyl;	/* starting cylinder */
+	unsigned char	dp_typ;		/* partition type */
+#define		DOSPTYP_386BSD	0xa5		/* 386BSD partition type */
+	unsigned char	dp_ehd;		/* end head */
+	unsigned char	dp_esect;	/* end sector */
+	unsigned char	dp_ecyl;	/* end cylinder */
+	unsigned long	dp_start;	/* absolute starting sector number */
+	unsigned long	dp_size;	/* partition size in sectors */
+} dos_partitions[NDOSPART];
+
+#define	DPSECT(s) ((s) & 0x3f)		/* isolate relevant bits of sector */
+#define	DPCYL(c, s) ((c) + (((s) & 0xc0)<<2)) /* and those that are cylinder */
+
 /*
  * Disk-specific ioctls.
  */
@@ -302,6 +331,26 @@ struct partinfo {
 
 #define DIOCSBAD	_IOW('d', 110, struct dkbad)	/* set kernel dkbad */
 
+#if defined(KERNEL)
+
+
+void diskerr(struct buf *, char *, char *, int, int, struct disklabel *);
+
+int dkcksum(struct disklabel *);
+
+int setdisklabel(struct disklabel *, struct disklabel *, u_long,
+	struct dos_partition *);
+
+char *readdisklabel(int, int (*)(), struct disklabel *,
+	struct dos_partition *, struct dkbad *, struct buf **);
+
+void disksort(struct buf *, struct buf *);
+
+int writedisklabel(int, int (*)(), struct disklabel *,
+		struct dos_partition *);
+
+int bounds_check_with_label(struct buf *, struct disklabel *, int);
+#endif
 #endif LOCORE
 
 #if !defined(KERNEL) && !defined(LOCORE)

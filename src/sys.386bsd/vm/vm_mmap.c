@@ -314,17 +314,18 @@ munmap(p, uap, retval)
 	return(0);
 }
 
-munmapfd(fd)
+munmapfd(p, fd)
+	register struct proc *p;
 {
 #ifdef DEBUG
 	if (mmapdebug & MDB_FOLLOW)
-		printf("munmapfd(%d): fd %d\n", curproc->p_pid, fd);
+		printf("munmapfd(%d): fd %d\n", p->p_pid, fd);
 #endif
 
 	/*
 	 * XXX -- should vm_deallocate any regions mapped to this file
 	 */
-	curproc->p_fd->fd_ofileflags[fd] &= ~UF_MAPPED;
+	p->p_fd->fd_ofileflags[fd] &= ~UF_MAPPED;
 }
 
 mprotect(p, uap, retval)

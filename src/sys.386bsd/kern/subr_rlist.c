@@ -78,10 +78,16 @@ loop:
 	}
 
 	/* if new region overlaps something currently present, panic */
-	if (start >= (*rlp)->rl_start && start <= (*rlp)->rl_end)
-		panic("overlapping rlist_free: freed twice?");
-	if (end >= (*rlp)->rl_start && end <= (*rlp)->rl_end)
-		panic("overlapping rlist_free: freed twice?");
+	if (start >= (*rlp)->rl_start && start <= (*rlp)->rl_end)  {
+		printf("Frag %d:%d, ent %d:%d ", start, end,
+			(*rlp)->rl_start, (*rlp)->rl_end);
+		panic("overlapping front rlist_free: freed twice?");
+	}
+	if (end >= (*rlp)->rl_start && end <= (*rlp)->rl_end) {
+		printf("Frag %d:%d, ent %d:%d ", start, end,
+			(*rlp)->rl_start, (*rlp)->rl_end);
+		panic("overlapping tail rlist_free: freed twice?");
+	}
 
 	/* are we adjacent to this element? (in front) */
 	if (end+1 == (*rlp)->rl_start) {
@@ -143,12 +149,12 @@ scan:
  */
 int rlist_alloc (rlp, size, loc)
 struct rlist **rlp; unsigned size, *loc; {
-	register struct rlist *lp = *rlp, *olp = 0;
+	register struct rlist *lp;
 
 
 	/* walk list, allocating first thing that's big enough (first fit) */
 	for (; *rlp; rlp = &((*rlp)->rl_next))
-		if(size <= (*rlp)->rl_start - (*rlp)->rl_end + 1) {
+		if(size <= (*rlp)->rl_end - (*rlp)->rl_start + 1) {
 
 			/* hand it to the caller */
 			if (loc) *loc = (*rlp)->rl_start;

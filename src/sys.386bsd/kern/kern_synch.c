@@ -324,6 +324,11 @@ tsleep(chan, pri, wmesg, timo)
 	p->p_stat = SSLEEP;
 	p->p_stats->p_ru.ru_nvcsw++;
 	swtch();
+#include "ddb.h"
+#ifdef	NDDB
+	/* handy breakpoint location after process "wakes" */
+	asm(".globl bpendtsleep ; bpendtsleep:");
+#endif
 resume:
 	curpri = p->p_usrpri;
 	splx(s);
@@ -411,6 +416,10 @@ sleep(chan, pri)
 	p->p_stat = SSLEEP;
 	p->p_stats->p_ru.ru_nvcsw++;
 	swtch();
+#ifdef	NDDB
+	/* handy breakpoint location after process "wakes" */
+	asm(".globl bpendsleep ; bpendsleep:");
+#endif
 	curpri = p->p_usrpri;
 	splx(s);
 }
@@ -556,3 +565,35 @@ setpri(p)
 	if (newpri < curpri)
 		need_resched();
 }
+
+#ifdef NDDB
+#define	DDBFUNC(s)	ddb_##s
+DDBFUNC(ps) () {
+	int np;
+	struct proc *ap, *p, *pp;
+	np = nprocs;
+	p = ap = allproc;
+    printf("  pid  proc    addr     uid     ppid  pgrp   flag stat comm         wchan\n");
+    while (--np >= 0) {
+	pp = p->p_pptr;
+	if (pp == 0)
+		pp = p;
+	if (p->p_stat) {
+	    printf("%5d %06x %06x %3d %5d %5d  %06x  %d  %s   ",
+		   p->p_pid, ap, p->p_addr, p->p_cred->p_ruid, pp->p_pid, 
+		   p->p_pgrp->pg_id, p->p_flag, p->p_stat,
+		   p->p_comm);
+	    if (p->p_wchan) {
+		if (p->p_wmesg)
+		    printf("%s ", p->p_wmesg);
+		printf("%x", p->p_wchan);
+	    }
+	    printf("\n");
+	}
+	ap = p->p_nxt;
+	if (ap == 0 && np > 0)
+		ap = zombproc;
+	p = ap;
+    }
+}
+#endif

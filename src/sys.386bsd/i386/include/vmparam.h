@@ -200,7 +200,7 @@
 
 /* user/kernel map constants */
 #define VM_MIN_ADDRESS		((vm_offset_t)0)
-#define VM_MAXUSER_ADDRESS	((vm_offset_t)0xFDBFD000)
+#define VM_MAXUSER_ADDRESS	((vm_offset_t)0xFDBFE000)
 #define UPT_MIN_ADDRESS		((vm_offset_t)0xFDC00000)
 #define UPT_MAX_ADDRESS		((vm_offset_t)0xFDFF7000)
 #define VM_MAX_ADDRESS		UPT_MAX_ADDRESS

@@ -137,7 +137,6 @@ u_char shfts, ctls, alts, caps, num, stp;
 
 u_char odt, bdt;
 
-#ifdef notdef
 u_char kbd() {
 	u_char dt, brk, act;
 	
@@ -151,6 +150,7 @@ loop:
 
 	brk = dt & 0x80 ; dt = dt & 0x7f ;
 
+#ifdef notdef
 	act = action[dt];
 	if (act&SHF) {
 		if(brk)	shfts = 0; else shfts = 1;
@@ -176,7 +176,7 @@ loop:
 			if(!brk) stp ^= 1;
 		} else if(brk)	stp = 0; else stp = 1;
 	}
-	if(ctl && alts && dt == 83) exit();
+	if(ctls && alts && dt == 83) exit();
 	if ((act&ASCII) && !brk) {
 		u_char chr;
 
@@ -194,13 +194,17 @@ loop:
 		while(inb(0x64)&1 == 1) inb(0x60);A*/
 		return(chr);
 	}
+#else
+	if (brk)
+		return(1);
+#endif
 	goto loop;
 }
-#endif
 
 scankbd() {
 u_char c;
 	
+#ifdef notdef
 	c = inb(0x60);
 	if (c == 83) exit();
 	/*if (c == 0xaa) return (0);
@@ -214,6 +218,7 @@ u_char c;
 	
 	if (bdt == c) return(0);
 	odt = c;
+#endif
 	return(1);
 }
 
@@ -236,6 +241,7 @@ kbdreset()
 	outb(0x64,0xd1);	
 	while (inb(0x64)&2);	/* wait input ready */
 	outb(0x60,0xdf);	
+	while (inb(0x64)&2);	/* wait input ready */
 	odt = bdt = 0;
 	inb(0x60);
 }

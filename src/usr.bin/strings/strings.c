@@ -134,7 +134,7 @@ main(argc, argv)
 			file = *argv++;
 			if (!freopen(file, "r", stdin)) {
 				(void)fprintf(stderr,
-				    "strings; %s: %s\n", file, strerror(errno));
+				    "strings: %s: %s\n", file, strerror(errno));
 				exitcode = 1;
 				goto nextfile;
 			}

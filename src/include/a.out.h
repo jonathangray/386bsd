@@ -64,7 +64,7 @@
 
 /* Data segment offset. */
 #define	N_DATOFF(ex) \
-	(N_TXTOFF(ex) + ((ex).a_magic != ZMAGIC ? (ex).a_text : \
+	(N_TXTOFF(ex) + ((ex).a_magic != ZMAGIC ? (ex).a_text \
 	: __LDPGSZ + ((ex).a_text - 1 & ~(__LDPGSZ - 1))))
 
 /* Symbol table offset. */

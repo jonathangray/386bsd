@@ -55,6 +55,7 @@ static char rcsid[] = "$Header: /usr/bill/working/sys/i386/isa/RCS/com.c,v 1.2 9
 #include "i386/isa/isa_device.h"
 #include "i386/isa/comreg.h"
 #include "i386/isa/ic/ns16550.h"
+#define cominor(d)
 
 int 	comprobe(), comattach(), comintr(), comstart(), comparam();
 
@@ -107,7 +108,7 @@ extern int kgdb_rate;
 extern int kgdb_debug_init;
 #endif
 
-#define	UNIT(x)		minor(x)
+#define	UNIT(x)		(minor(x)-1)
 
 comprobe(dev)
 struct isa_device *dev;
@@ -115,10 +116,10 @@ struct isa_device *dev;
 	/* force access to id reg */
 	outb(dev->id_iobase+com_cfcr, 0);
 	outb(dev->id_iobase+com_iir, 0);
+	DELAY(100);
 	if ((inb(dev->id_iobase+com_iir) & 0x38) == 0)
 		return(1);
-	return(1);
-
+	return(0);
 }
 
 
@@ -130,9 +131,9 @@ struct isa_device *isdp;
 	u_char		unit;
 	int		port = isdp->id_iobase;
 
-	unit = isdp->id_unit;
+	unit = isdp->id_unit - 1;
 	if (unit == comconsole)
-		DELAY(100000);
+		DELAY(1000);
 	com_addr[unit] = port;
 	com_active |= 1 << unit;
 	comsoftCAR |= 1 << unit;	/* XXX */
@@ -140,13 +141,15 @@ struct isa_device *isdp;
 	/* look for a NS 16550AF UART with FIFOs */
 	outb(port+com_fifo, FIFO_ENABLE|FIFO_RCV_RST|FIFO_XMT_RST|FIFO_TRIGGER_14);
 	DELAY(100);
-	if ((inb(port+com_iir) & IIR_FIFO_MASK) == IIR_FIFO_MASK)
+	if ((inb(port+com_iir) & IIR_FIFO_MASK) == IIR_FIFO_MASK) {
 		com_hasfifo |= 1 << unit;
+		printf(" fifo");
+	}
 
 	outb(port+com_ier, 0);
 	outb(port+com_mcr, 0 | MCR_IENABLE);
 #ifdef KGDB
-	if (kgdb_dev == makedev(commajor, unit)) {
+	if (kgdb_dev == makedev(commajor, unit+1)) {
 		if (comconsole == unit)
 			kgdb_dev = -1;	/* can't debug over console port */
 		else {
@@ -175,14 +178,7 @@ struct isa_device *isdp;
 }
 
 /* ARGSUSED */
-#ifdef __STDC__
 comopen(dev_t dev, int flag, int mode, struct proc *p)
-#else
-comopen(dev, flag, mode, p)
-	dev_t dev;
-	int flag, mode;
-	struct proc *p;
-#endif
 {
 	register struct tty *tp;
 	register int unit;
@@ -243,7 +239,7 @@ comclose(dev, flag, mode, p)
 	outb(com+com_cfcr, inb(com+com_cfcr) & ~CFCR_SBREAK);
 #ifdef KGDB
 	/* do not disable interrupts if debugging */
-	if (kgdb_dev != makedev(commajor, unit))
+	if (kgdb_dev != makedev(commajor, unit+1))
 #endif
 	outb(com+com_ier, 0);
 	if (tp->t_cflag&HUPCL || tp->t_state&TS_WOPEN || 
@@ -287,6 +283,7 @@ comintr(unit)
 	register u_char code;
 	register struct tty *tp;
 
+	unit--;
 	com = com_addr[unit];
 	while (1) {
 		code = inb(com+com_iir);
@@ -303,7 +300,7 @@ comintr(unit)
 #define	RCVBYTE() \
 			code = inb(com+com_data); \
 			if ((tp->t_state & TS_ISOPEN) == 0) { \
-				if (kgdb_dev == makedev(commajor, unit) && \
+				if (kgdb_dev == makedev(commajor, unit+1) && \
 				    code == FRAME_END) \
 					kgdb_connect(0); /* trap into kgdb */ \
 			} else \
@@ -362,7 +359,7 @@ comeint(unit, stat, com)
 #ifdef KGDB
 		/* we don't care about parity errors */
 		if (((stat & (LSR_BI|LSR_FE|LSR_PE)) == LSR_PE) &&
-		    kgdb_dev == makedev(commajor, unit) && c == FRAME_END)
+		    kgdb_dev == makedev(commajor, unit+1) && c == FRAME_END)
 			kgdb_connect(0); /* trap into kgdb */
 #endif
 		return;
@@ -619,7 +616,7 @@ comcnprobe(cp)
 	/* make sure hardware exists?  XXX */
 
 	/* initialize required fields */
-	cp->cn_dev = makedev(commajor, unit);
+	cp->cn_dev = makedev(commajor, unit+1);
 	cp->cn_tp = &com_tty[unit];
 #ifdef	COMCONSOLE
 	cp->cn_pri = CN_REMOTE;		/* Force a serial port console */

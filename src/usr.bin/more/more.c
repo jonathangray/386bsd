@@ -128,6 +128,7 @@ int		soglitch;	/* terminal has standout mode glitch */
 int		ulglitch;	/* terminal has underline mode glitch */
 int		pstate = 0;	/* current UL state */
 char		*getenv();
+regexp		*previous;	/* previous regular expression */
 struct {
     long chrctr, line;
 } context, screen_start;
@@ -1332,7 +1333,10 @@ register int n;
     context.line = saveln = Currline;
     context.chrctr = startline;
     lncount = 0;
-    s = regcomp (buf);
+    if (buf)
+	previous = s = regcomp (buf);
+    else
+	s = previous;
     while (!feof (file)) {
 	line3 = line2;
 	line2 = line1;

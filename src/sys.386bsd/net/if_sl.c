@@ -443,7 +443,7 @@ slstart(tp)
 		 * output queue (if the stuff was important, it'll get
 		 * retransmitted).
 		 */
-		if (RB_LEN(&tp->t_out) < SLMTU) {
+		if (RBSZ - RB_LEN(&tp->t_out) < SLMTU) {
 			m_freem(m);
 			sc->sc_if.if_collisions++;
 			continue;
@@ -488,17 +488,41 @@ slstart(tp)
 #ifdef was
 					if (b_to_q((char *)bp, cp - bp, &tp->t_outq))
 						break;
+					sc->sc_bytessent += cp - bp;
 #else
+#ifdef works
 					if (cc = RB_CONTIGPUT(&tp->t_out)) {
 						cc = min (cc, cp - bp);
 						bcopy((char *)bp,
 							tp->t_out.rb_tl, cc);
 						tp->t_out.rb_tl =
 				  RB_ROLLOVER(&tp->t_out, tp->t_out.rb_tl + cc);
+						sc->sc_bytessent += cc;
+						bp += cc;
 					} else
 						break;
+					if (cp > bp && cc = RB_CONTIGPUT(&tp->t_out)) {
+						cc = min (cc, cp - bp);
+						bcopy((char *)bp,
+							tp->t_out.rb_tl, cc);
+						tp->t_out.rb_tl =
+				  RB_ROLLOVER(&tp->t_out, tp->t_out.rb_tl + cc);
+						sc->sc_bytessent += cc;
+						bp += cc;
+					} else
+						break;
+#else
+					while (cp > bp && (cc = RB_CONTIGPUT(&tp->t_out))) {
+						cc = min (cc, cp - bp);
+						bcopy((char *)bp,
+							tp->t_out.rb_tl, cc);
+						tp->t_out.rb_tl =
+				  RB_ROLLOVER(&tp->t_out, tp->t_out.rb_tl + cc);
+						sc->sc_bytessent += cc;
+						bp += cc;
+					}
 #endif
-					sc->sc_bytessent += cp - bp;
+#endif
 				}
 				/*
 				 * If there are characters left in the mbuf,

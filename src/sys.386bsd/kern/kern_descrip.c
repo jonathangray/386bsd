@@ -589,14 +589,19 @@ fdfree(p)
 {
 	register struct filedesc *fdp = p->p_fd;
 	struct file **fpp;
+	char *fdfp;
 	register int i;
 
 	if (--fdp->fd_refcnt > 0)
 		return;
 	fpp = fdp->fd_ofiles;
-	for (i = fdp->fd_lastfile; i-- >= 0; fpp++)
-		if (*fpp)
+	fdfp = fdp->fd_ofileflags;
+	for (i = 0; i <= fdp->fd_lastfile; i++, fpp++, fdfp++)
+		if (*fpp != NULL) {
+			if (*fdfp & UF_MAPPED)
+				(void) munmapfd(p, i);
 			(void) closef(*fpp, p);
+		}
 	if (fdp->fd_nfiles > NDFILE)
 		FREE(fdp->fd_ofiles, M_FILEDESC);
 	vrele(fdp->fd_cdir);
@@ -612,16 +617,25 @@ void
 fdcloseexec(p)
 	struct proc *p;
 {
-	register struct filedesc *fdp = p->p_fd;
+	struct filedesc *fdp = p->p_fd;
 	struct file **fpp;
+	char *fdfp;
 	register int i;
 
 	fpp = fdp->fd_ofiles;
-	for (i = fdp->fd_lastfile; i-- >= 0; fpp++)
-		if (*fpp && (fdp->fd_ofileflags[i] & UF_EXCLOSE)) {
+	fdfp = fdp->fd_ofileflags;
+	for (i = 0; i <= fdp->fd_lastfile; i++, fpp++, fdfp++)
+		if (*fpp != NULL && (*fdfp & UF_EXCLOSE)) {
+			if (*fdfp & UF_MAPPED)
+				(void) munmapfd(p, i);
 			(void) closef(*fpp, p);
-			*fpp = 0;
+			*fpp = NULL;
+			*fdfp = 0;
+			if (i < fdp->fd_freefile)
+				fdp->fd_freefile = i;
 		}
+	while (fdp->fd_lastfile > 0 && fdp->fd_ofiles[fdp->fd_lastfile] == NULL)
+		fdp->fd_lastfile--;
 }
 
 /*

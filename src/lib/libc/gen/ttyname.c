@@ -102,7 +102,6 @@ __oldttyname(fd, sb)
 		if (stat(buf, &dsb) || sb->st_dev != dsb.st_dev ||
 		    sb->st_ino != dsb.st_ino)
 			continue;
-		(void)closedir(dp);
 		rval = buf;
 		break;
 	}

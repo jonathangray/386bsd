@@ -580,7 +580,7 @@ do_systemspec(f, fl, first)
 	fprintf(f, "\t${SYSTEM_LD} swap%s.o\n", fl->f_fn);
 	fprintf(f, "\t${SYSTEM_LD_TAIL}\n\n");
 	do_swapspec(f, fl->f_fn);
-	for (fl = fl->f_next; fl->f_type == SWAPSPEC; fl = fl->f_next)
+	for (fl = fl->f_next; fl && fl->f_type == SWAPSPEC; fl = fl->f_next)
 		;
 	return (fl);
 }

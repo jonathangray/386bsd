@@ -60,7 +60,7 @@ struct	isa_driver npxdriver = {
 
 struct proc *npxproc;	/* process who owns device, otherwise zero */
 struct pcb *npxpcb;	/* owners context structure */
-static npxexists;
+int npxexists;
 extern long npx0mask;
 
 /*
@@ -76,7 +76,6 @@ npxprobe(dvp)
 
 	/* insure EM bit off */
 	load_cr0(rcr0() & ~CR0_EM);	/* stop emulating */
-/*pg("init");*/
 	asm("	fninit ");	/* put device in known state */
 
 	/* check for a proper status of zero */
@@ -95,7 +94,7 @@ npxprobe(dvp)
 		}
 	}
 
-/* insure EM bit on */
+	/* insure EM bit on */
 	load_cr0(rcr0() | CR0_EM);	/* start emulating */
 	return (0);
 }
@@ -107,33 +106,31 @@ npxattach(dvp)
 	struct isa_device *dvp;
 {
 
-	npxinit(0x262);
-	/*outb(0xb1,0);		/* reset processor */
+	npxinit(__INITIAL_NPXCW__);
 	npxexists++;
 	npx0mask = dvp->id_irq;
 }
 
 /*
- * Initialize floating point unit, usually after an error
+ * Initialize floating point unit.
  */
 npxinit(control) {
-static short wd;
+	static short wd;
 
 	if (npxexists == 0) return;
 
 
-wd = control;
+	wd = control;
+	wd = 0x272;
 	load_cr0(rcr0() & ~CR0_EM);	/* stop emulating */
-#ifndef NOINTEL_COMPAT
 	asm ("	fninit");
 	asm("	fldcw %0" : : "g" (wd));
-	asm("	fnsave %0 " : : "g" (curpcb->pcb_savefpu) );
-#else
-	asm("fninit");
-	asm("	fnsave %0 " : : "g" (curpcb->pcb_savefpu) );
-#endif
+	if (curpcb) {
+		asm("	fnsave %0 " : : "g" (curpcb->pcb_savefpu) );
+		curpcb->pcb_flags |= FP_NEEDSRESTORE;
+	}
 	load_cr0(rcr0() | CR0_EM);	/* start emulating */
-
+	outb(0xb1,0);		/* reset processor */
 }
 
 /*
@@ -161,30 +158,39 @@ npxunload() {
  * Record information needed in processing an exception and clear status word
  */
 npxintr(frame) struct intrframe frame; {
-	struct trapframe tf;
+	int code;
+static status;
 
-/*pg("npxintr");*/
 	outb(0xf0,0);		/* reset processor */
+/*pg("npxintr");*/
 
+	asm ("	fnstsw	%0 " : "=m" (status) : "m" (status) );
 	/* sync state in process context structure, in advance of debugger/process looking for it */
 	if (npxproc == 0 || npxexists == 0) panic ("npxintr");
 	asm ("	fnsave %0 " : : "g" (npxpcb->pcb_savefpu) );
 
-	/*
-	 * Prepair a trap frame for our generic exception processing routine, trap()
-	 */
-	bcopy(&frame.if_es, &tf, sizeof(tf));
-	tf.tf_trapno = T_ARITHTRAP;
 #ifdef notyet
 	/* encode the appropriate code for detailed information on this exception */
-	tf.tf_err = ???;
+	code = ???;
+#else
+	code = 0;	/* XXX */
 #endif
-	trap(tf);
 
-	/*
-	 * Restore with any changes to superior frame
-	 */
-	bcopy(&tf, &frame.if_es, sizeof(tf));
+/*if((pg("status %x", status) & 0x7f) == 't') {*/
+	/* pass exception to process, which may not be the current one */
+	if (npxproc == curproc) {
+		/* Q: what if in an interrupt, or in trap processing? */
+		if (ISPL(frame.if_cs) == SEL_UPL) {
+			curproc->p_regs = (int *)&frame.if_es;
+			curpcb->pcb_flags |= FM_TRAP;	/* used by sendsig */
+		} /* else printf("*");*/
+		trapsignal(curproc, SIGFPE, code);
+		curpcb->pcb_flags &= ~FM_TRAP;	/* used by sendsig */
+	} else {
+		/* printf("P");*/
+		psignal(npxproc, SIGFPE);
+	}
+/*}*/
 
 	/* clear the exception so we can catch others like it */
 	asm ("	fnclex");

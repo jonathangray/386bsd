@@ -14,4 +14,4 @@ beforeinstall:
 	    install -c -o ${BINOWN} -g ${BINGRP} -m 444 curses.h \
 	    ${DESTDIR}/usr/include
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

@@ -155,6 +155,6 @@ iread(dip, off, p, sz)
 }
 
 _stop(s) {
-	printf("Failed:%s\n");
+	printf("Failed:%s\n", s);
 	exit(0);
 }

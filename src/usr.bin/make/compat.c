@@ -188,6 +188,8 @@ CompatRunCommand (cmd, gn)
 	}
 	cmd++;
     }
+
+    while (isspace(*cmd)) cmd++;
     
     /*
      * Search for meta characters in the command. If there are no meta

@@ -52,6 +52,9 @@
 
 #define	wd_altsts	0x206	 /*alternate fixed disk status(via 1015) (R)*/
 #define	wd_ctlr		0x206	 /*fixed disk controller control(via 1015) (W)*/
+#define  WDCTL_4BIT	 0x8	/* use four head bits (wd1003) */
+#define  WDCTL_RST	 0x4	/* reset the controller */
+#define  WDCTL_IDS	 0x2	/* disable controller interrupts */
 #define	wd_digin	0x207	 /* disk controller input(via 1015) (R)*/
 
 /*
@@ -73,12 +76,68 @@
 /*
  * Commands for Disk Controller.
  */
+#define	WDCC_RESTORE	0x10		/* disk restore code -- resets cntlr */
+
 #define	WDCC_READ	0x20		/* disk read code */
 #define	WDCC_WRITE	0x30		/* disk write code */
-#define	WDCC_RESTORE	0x10		/* disk restore code -- resets cntlr */
+#define	 WDCC__LONG	 0x02		 /* modifier -- access ecc bytes */
+#define	 WDCC__NORETRY	 0x01		 /* modifier -- no retrys */
+
 #define	WDCC_FORMAT	0x50		/* disk format code */
+#define	WDCC_DIAGNOSE	0x90		/* controller diagnostic */
+#define	WDCC_IDC	0x91		/* initialize drive command */
+
+#define	WDCC_EXTDCMD	0xE0		/* send extended command */
+#define	WDCC_READP	0xEC		/* read parameters from controller */
+#define	WDCC_CACHEC	0xEF		/* cache control */
 
 #define	WD_STEP		0		/* winchester- default 35us step */
 
 #define	WDSD_IBM	0xa0		/* forced to 512 byte sector, ecc */
 
+
+#ifdef KERNEL
+/*
+ * read parameters command returns this:
+ */
+struct wdparams {
+	/* drive info */
+	short	wdp_config;		/* general configuration */
+	short	wdp_fixedcyl;		/* number of non-removable cylinders */
+	short	wdp_removcyl;		/* number of removable cylinders */
+	short	wdp_heads;		/* number of heads */
+	short	wdp_unfbytespertrk;	/* number of unformatted bytes/track */
+	short	wdp_unfbytes;		/* number of unformatted bytes/sector */
+	short	wdp_sectors;		/* number of sectors */
+	short	wdp_minisg;		/* minimum bytes in inter-sector gap*/
+	short	wdp_minplo;		/* minimum bytes in postamble */
+	short	wdp_vendstat;		/* number of words of vendor status */
+	/* controller info */
+	char	wdp_cnsn[20];		/* controller serial number */
+	short	wdp_cntype;		/* controller type */
+#define	WDTYPE_SINGLEPORTSECTOR	1	 /* single port, single sector buffer */
+#define	WDTYPE_DUALPORTMULTI	2	 /* dual port, multiple sector buffer */
+#define	WDTYPE_DUALPORTMULTICACHE 3	 /* above plus track cache */
+	short	wdp_cnsbsz;		/* sector buffer size, in sectors */
+	short	wdp_necc;		/* ecc bytes appended */
+	char	wdp_rev[8];		/* firmware revision */
+	char	wdp_model[40];		/* model name */
+	short	wdp_nsecperint;		/* sectors per interrupt */
+	short	wdp_usedmovsd;		/* can use double word read/write? */
+};
+
+/*
+ * wd driver entry points
+ */
+int wdprobe(struct isa_device *);
+int wdattach(struct isa_device *);
+int wdstrategy(struct buf *);
+void wdintr(struct intrframe);
+int wdopen(dev_t, int, int, struct proc *);
+int wdclose(dev_t dev, int flags, int fmt);
+int wdioctl(dev_t, int, caddr_t, int);
+/* int wdformat(struct buf *bp); */
+int wdsize(dev_t);
+int wddump(dev_t);
+
+#endif KERNEL

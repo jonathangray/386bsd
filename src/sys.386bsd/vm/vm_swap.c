@@ -86,8 +86,9 @@ swapinit()
 	if (bdevvp(swdevt[0].sw_dev, &swdevt[0].sw_vp))
 		panic("swapvp");
 	if (error = swfree(&proc0, 0)) {
-		printf("swfree errno %d\n", error);	/* XXX */
-		panic("swapinit swfree 0");
+		printf("\nwarning: no swap space present (yet)\n");
+		/* printf("(swfree (..., 0) -> %d)\n", error);	/* XXX */
+		/*panic("swapinit swfree 0");*/
 	}
 
 	/*
@@ -206,7 +207,9 @@ swapon(p, uap, retval)
 				return (EBUSY);
 			}
 			sp->sw_vp = vp;
+			printf("adding swap: ");
 			if (error = swfree(p, sp - swdevt)) {
+				printf("failed! (unchanged)\n");
 				vrele(vp);
 				return (error);
 			}
@@ -235,26 +238,23 @@ swfree(p, index)
 	int error;
 
 	sp = &swdevt[index];
+	nblks = sp->sw_nblks;
+	if (nblks <= 0)
+		return(ENXIO);
 	vp = sp->sw_vp;
 	if (error = VOP_OPEN(vp, FREAD|FWRITE, p->p_ucred, p))
 		return (error);
 	sp->sw_freed = 1;
-	nblks = sp->sw_nblks;
+
+	/*printf("%d blocks from device %d/%d ",
+		sp->sw_nblks, major(sp->sw_dev), minor(sp->sw_dev));*/
 	for (dvbase = 0; dvbase < nblks; dvbase += dmmax) {
 		blk = nblks - dvbase;
 		if ((vsbase = index*dmmax + dvbase*nswdev) >= nswap)
 			panic("swfree");
 		if (blk > dmmax)
 			blk = dmmax;
-		/*
-		 * Don't use the first cluster of the device
-		 * in case it starts with a label or boot block.
-		 */
-		if (dvbase == 0)
-			rlist_free(&swapmap, vsbase + ctod(CLSIZE),
-				vsbase + blk - 1); 
-		else
-			rlist_free(&swapmap, vsbase, vsbase + blk - 1); 
+		rlist_free(&swapmap, vsbase, vsbase + blk - 1); 
 	}
 	return (0);
 }

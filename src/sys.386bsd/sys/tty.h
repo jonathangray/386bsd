@@ -40,7 +40,7 @@
  * Ring buffers provide a contiguous, dense storage for
  * character data used by the tty driver.
  */
-#define	RBSZ 2048
+#define	RBSZ 1024
 
 struct ringb {
 	char	*rb_hd;	  /* head of buffer segment to be read */
@@ -59,7 +59,7 @@ struct ringb {
 
 #define	RB_LEN(rp) \
 		((rp)->rb_hd <= (rp)->rb_tl ? (rp)->rb_tl - (rp)->rb_hd : \
-		RBSZ - ((rp)->rb_hd - (rp)->rb_tl))
+		RBSZ - 1 - ((rp)->rb_hd - (rp)->rb_tl))
 
 #define	RB_CONTIGPUT(rp) \
 		(RB_PRED(rp, (rp)->rb_hd) < (rp)->rb_tl ?  \
@@ -123,7 +123,7 @@ struct tty {
 #define	TTYHOG	1024
 
 #ifdef KERNEL
-#define TTMAXHIWAT	(RBSZ-10)	/* XXX */
+#define TTMAXHIWAT	(RBSZ/2)	/* XXX */
 #define TTMINHIWAT	128
 #define TTMAXLOWAT	256
 #define TTMINLOWAT	32

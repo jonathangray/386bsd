@@ -168,7 +168,7 @@ extern int	IdlePTD;	/* physical address of "Idle" state directory */
  */
 
 #define	pdei(va)	(((va)&PD_MASK)>>PD_SHIFT)
-#define	ptei(va)	(((va)&PT_MASK)>>PT_SHIFT)
+#define	ptei(va)	(((va)&PT_MASK)>>PG_SHIFT)
 
 /*
  * Pmap stuff

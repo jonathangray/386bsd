@@ -20,5 +20,5 @@ afterinstall:
 	-rm -f $(DESTDIR)$(LIBDIR)/gcc-gnulib
 	cd $(DESTDIR)$(LIBDIR); ln -s libgnulib.a gcc-gnulib
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>
 .include "../Makefile.symlinks"

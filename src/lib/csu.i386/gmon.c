@@ -31,9 +31,10 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
+#if defined(LIBC_SCCS) && !defined(lint)
 static char sccsid[] = "@(#)gmon.c	5.3 (Berkeley) 5/22/91";
-#endif /* not lint */
+#endif /* LIBC_SCCS and not lint */
+
 
 #include <unistd.h>
 

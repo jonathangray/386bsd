@@ -1171,6 +1171,13 @@ decode_option (swt, arg)
       force_executable = 1;
       return;
     }
+  if (! strcmp (swt + 1, "screwballmode"))
+    {
+      screwballmode = 1;
+      magic = OMAGIC;
+      text_start = sizeof(struct exec);
+      return;
+    }
 
   if (swt[2] != 0)
     arg = &swt[2];
@@ -1201,6 +1208,7 @@ decode_option (swt, arg)
       if (arg != NULL && strcmp (arg, "g++") == 0)
 	demangler = cplus_demangle;
       return;
+      magic = OMAGIC;
 
     case 'L':
       n_search_dirs++;
@@ -1215,8 +1223,10 @@ decode_option (swt, arg)
 
     case 'N':
       magic = OMAGIC;
+#ifdef notnow
 text_start = sizeof(struct exec); /* XXX */
 screwballmode=1;
+#endif
       return;
 
 #ifdef NMAGIC
@@ -1572,6 +1582,7 @@ read_entry_strings (desc, entry)
   if (entry->string_size != read (desc, entry->strings, entry->string_size))
     fatal_with_file ("premature end of file in strings of ", entry);
 
+#if 0
   /* While we are here, see if the file has a symbol segment at the end.
      For a separate file, just try reading some more.
      For a library member, compare current pos against total size.  */
@@ -1588,6 +1599,7 @@ read_entry_strings (desc, entry)
       if (buffer != sizeof buffer)
 	fatal_with_file ("premature end of file in GDB symbol segment of ", entry);
     }
+#endif
   /* Don't try to do anything with symsegs.  */
   return;
 #if 0
@@ -2288,7 +2300,7 @@ subfile_wanted_p (entry)
 	  if (!sp) continue;
 
 	  if ((sp->referenced && !sp->defined)
-	      || (sp->defined && sp->max_common_size))
+	      || (sp->defined && sp->max_common_size && (type & N_TEXT) == 0))
 	    {
 	      /* This is a symbol we are looking for.  It is either
 	         not yet defined or defined as a common.  */

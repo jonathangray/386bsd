@@ -498,11 +498,9 @@ pipeout(c)
 #ifdef CONNECT
 /*
  * Fork a program with:
- *  0 <-> local tty in
- *  1 <-> local tty out
+ *  0 <-> remote tty in
+ *  1 <-> remote tty out
  *  2 <-> local tty out
- *  3 <-> remote tty in
- *  4 <-> remote tty out
  */
 consh(c)
 {
@@ -531,9 +529,10 @@ consh(c)
 	} else {
 		register int i;
 
-		dup2(FD, 3);
-		dup2(3, 4);
-		for (i = 5; i < 20; i++)
+		dup2(1, 2);
+		dup2(FD, 0);
+		dup2(0, 1);
+		for (i = 3; i < 20; i++)
 			close(i);
 		signal(SIGINT, SIG_DFL);
 		signal(SIGQUIT, SIG_DFL);

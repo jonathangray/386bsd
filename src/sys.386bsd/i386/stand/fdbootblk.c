@@ -40,7 +40,6 @@
  * fdbootblk.s:
  *	Written 10/6/90 by William F. Jolitz
  *	Initial block boot for AT/386 with typical stupid NEC controller
- *	Works only with 3.5 inch diskettes that have 16 or greater sectors/side
  *
  *	Goal is to read in sucessive 7.5Kbytes of bootstrap to
  *	execute.
@@ -49,23 +48,67 @@
  */
 /*#include "/sys/i386/isa/isa.h"
 #include "/sys/i386/isa/fdreg.h"*/
-#define	NOP	jmp 1f ; nop ; 1:
+#define	NOP	inb	$0x84,%al
 #define BIOSRELOC	0x7c00
-#define	start	0x70400
+#define	start	RELOC+0x400
 
+	/* mumbo-jumbo to pacify DOS, in the hope of getting diskcopy to work */
+	jmp 1f
+	.asciz "386BSD "
+	.byte 1			# sectors per allocation
+	.word 15		# additional sectors for bootstrap
+	.word 0			# number of DOS fat sectors
+	.word 0			# number of DOS rootdir entries
+	.byte 0xf0		# media descriptor
+	.word 0			# number of sectors per a DOS fat entry
+	.word 18		# number of sectors per track
+	.word 2			# number of heads
+	.long 0			# number of hidden sectors
+	.long 2880-18		# logical sectors per volume
+	.byte 0			# physical drive
+	.byte 0x29		# ?
+	.long 137		# binary id
+	.ascii "Release 0.1"	# volume label
+	.space 5
+1:
 	/* step 0 force descriptors to bottom of address space */
-
-	.byte 0xfa,0xb8,0x30,0x00,0x8e,0xd0,0xbc,0x00,0x01 #ll fb
+	
+	cli
+	.byte 0xb8,0x30,0x00	/* mov $0x30,%ax */
+	mov %ax, %ss
+	.byte 0xbc,0x00,0x01	/* mov $0x100,%sp */
 
 	xorl	%eax,%eax
 	movl	%ax,%ds
 	movl	%ax,%es
 
+	/* obtain BIOS parameters for hard disk XXX */
+	movb	$0x9f,%ah	 /* write to 0x9ff00  XXX */
+	movb	$0xf0,%al
+	mov	%ax,%es
+	xor	%edi,%edi
+
+	.byte 0xf, 0xb4, 0x36 ; .word  0x41*4	/* lfs 0x41*4, %si */
+	xorb	%ch,%ch
+	movb	$0x10,%cl
+	fs
+	rep
+	movsb
+
+	.byte 0xf, 0xb4, 0x36 ; .word  0x46*4	/* lfs 0x46*4, %si */
+	xorb	%ch,%ch
+	movb	$0x10,%cl
+	fs
+	rep
+	movsb
+
+ 	xorl	%eax,%eax
+	movl	%ax,%es
+
 	/* step 1 load new descriptor table */
 
-	.byte 0x2E,0x0F,1,0x16
-	.word	BIOSRELOC+0x4a	#GDTptr
-	# word aword cs lgdt GDTptr
+	.byte 0x2E,0x0F,1,0x16 /* word aword cs lgdt GDTptr */
+	.word	BIOSRELOC+0xa4	#GDTptr
 
 	/* step 2 turn on protected mode */
 
@@ -84,7 +127,7 @@
 	movl	%ax,%es
 	movl	%ax,%ss
 	word
-	ljmp	$0x8,$ BIOSRELOC+0x59	/* would be nice if .-RELOC+0x7c00 worked */
+	ljmp	$0x8,$ BIOSRELOC+0xb3	/* would be nice if .-RELOC+0x7c00 worked */
 
  /* Global Descriptor Table contains three descriptors:
   * 0x00: Null: not used
@@ -109,7 +152,7 @@ DataDesc:	.word	0xFFFF	# limit at maximum: (bits 15:0)
  *  contains 6-byte pointer information for LGDT
  */
 GDTptr:	.word	0x17	# limit to three 8 byte selectors(null,code,data)
-	.long 	BIOSRELOC+0x32	# GDT -- arrgh, gas again!
+	.long 	BIOSRELOC+0x8c	# GDT -- arrgh, gas again!
 readcmd: .byte 0xe6,0,0,0,0,2,18,0x1b,0xff
 
 	/* step 4 relocate to final bootstrap address. */
@@ -119,14 +162,15 @@ reloc:
 	movl	$512,%ecx
 	rep
 	movsb
+	movl	$0xa0000, %esp
 	pushl	$dodisk
 	ret
 
 	/* step 5 load remaining 15 sectors off disk */
 dodisk:
-	movl	$0x70200,%edi
-	xorl	%ebx,%ebx
-	incb	%bl
+	movl	$ RELOC+0x200, %edi
+	xorl	%ebx, %ebx
+	incb	%bl # shl $1,%bl
 	incb	%bl
 	movb	$0x20,%al	# do a eoi
 	outb	%al,$0x20
@@ -171,7 +215,7 @@ dodisk:
 	NOP
 
 	/* set channel 2 */
-	# movb	$2,%al		# outb(0x0A,2);
+	movb	$2,%al		# outb(0x0A,2);
 	outb	%al,$0x0A
 	NOP
 
@@ -181,12 +225,13 @@ dodisk:
 	xorl	%ecx,%ecx
 	movb	$9,%cl
 
- 2:	inb	%dx,%al
-	NOP
+ 2:	NOP
+	inb	%dx,%al
 	testb	$0x80,%al
 	jz 2b
 
 	incb	%dx
+	NOP
 	movl	(%esi),%al
 	outb	%al,%dx
 	NOP
@@ -197,14 +242,16 @@ dodisk:
 	/* watch the icu looking for an interrupt signalling completion */
 	xorl	%edx,%edx
 	movb	$0x20,%dl
- 2:	movb	$0xc,%al
+ 2:
+	NOP
+	movb	$0xc,%al
 	outb	%al,%dx
 	NOP
 	inb	%dx,%al
-	NOP
 	andb	$0x7f,%al
 	cmpb	$6,%al
 	jne	2b
+	NOP
 	movb	$0x20,%al	# do a eoi
 	outb	%al,%dx
 	NOP
@@ -212,8 +259,9 @@ dodisk:
 	movl	$0x3f4,%edx
 	xorl	%ecx,%ecx
 	movb	$7,%cl
- 2:	inb	%dx,%al
+ 2:
 	NOP
+	inb	%dx,%al
 	andb	$0xC0,%al
 	cmpb	$0xc0,%al
 	jne	2b
@@ -237,14 +285,14 @@ dodisk:
 
 	/* sorry, no flags at this point! */
 
-	pushl $	start
-	ret	/* main (dev, unit, off) */
+	movl $ start, %eax
+	call %eax	/* main (dev, unit, off) */
 
 ebootblkcode:
 
 	/* remaining space usable for a disk label */
 	
-	.space	510-310		/* would be nice if .space 512-2-. worked */
+	.org	0x1fe
 	.word	0xaa55		/* signature -- used by BIOS ROM */
 
 ebootblk: 			/* MUST BE EXACTLY 0x200 BIG FOR SURE */

@@ -65,11 +65,27 @@ static char sccsid[] = "@(#)disklabel.c	5.20 (Berkeley) 2/9/91";
  * in which case the label is embedded in the bootstrap.
  * The bootstrap source must leave space at the proper offset
  * for the label on such machines.
+ *
+ * On 386BSD, the disklabel may either be at the start of the disk, or, at
+ * the start of an MS/DOS partition. In this way, it can be used either
+ * in concert with other operating systems sharing a disk, or with the
+ * disk dedicated to 386BSD. In shared mode, the DOS disk geometry must be
+ * identical to that which disklabel uses, and the disklabel must solely
+ * describe the space within the partition selected. Otherwise, the disk
+ * must be dedicated to 386BSD. -wfj
  */
 
-#if defined(vax) || defined(i386)
+#if defined(vax)
 #define RAWPARTITION	'c'
-#else
+#endif
+
+#if defined(i386)
+/* with 386BSD, 'c' maps the portion of the disk given over to 386BSD,
+   and 'd' maps the entire drive, ignoring any partition tables */
+#define RAWPARTITION	'd'
+#endif
+
+#if defined(vax)==0 && defined(i386)==0
 #define RAWPARTITION	'a'
 #endif
 
@@ -112,6 +128,11 @@ int	rflag;
 
 #ifdef DEBUG
 int	debug;
+#endif
+
+#ifdef __386BSD__
+struct dos_partition *dosdp;	/* 386BSD DOS partition, if found */
+struct dos_partition *readmbr(int);
 #endif
 
 main(argc, argv)
@@ -172,19 +193,38 @@ main(argc, argv)
 
 	dkname = argv[0];
 	if (dkname[0] != '/') {
-		(void)sprintf(np, "%s/r%s%c", _PATH_DEV, dkname, RAWPARTITION);
+		(void)sprintf(np, "%sr%s%c", _PATH_DEV, dkname, RAWPARTITION);
 		specname = np;
 		np += strlen(specname) + 1;
 	} else
 		specname = dkname;
 	f = open(specname, op == READ ? O_RDONLY : O_RDWR);
 	if (f < 0 && errno == ENOENT && dkname[0] != '/') {
-		(void)sprintf(specname, "%s/r%s", _PATH_DEV, dkname);
+		(void)sprintf(specname, "%sr%s", _PATH_DEV, dkname);
 		np = namebuf + strlen(specname) + 1;
 		f = open(specname, op == READ ? O_RDONLY : O_RDWR);
 	}
 	if (f < 0)
 		Perror(specname);
+
+#ifdef	__386BSD__
+	/*
+	 * Check for presence of DOS partition table in
+	 * master boot record. Return pointer to 386BSD
+	 * partition, if present. If no valid partition table,
+	 * return 0. If valid partition table present, but no
+	 * partition to use, return a pointer to a non-386bsd
+	 * partition.
+	 */
+	dosdp = readmbr(f);
+	{ int mfd; unsigned char params[0x10];
+		/* sleezy, but we need it fast! */
+		mfd = open("/dev/mem", 0);
+		lseek(mfd, 0x300, 0);
+		read (mfd, params, 0x10);
+	}
+
+#endif
 
 	switch(op) {
 	case EDIT:
@@ -202,6 +242,7 @@ main(argc, argv)
 	case READ:
 		if (argc != 1)
 			usage();
+			
 		lp = readlabel(f);
 		display(stdout, lp);
 		error = checklabel(lp);
@@ -320,12 +361,46 @@ writelabel(f, boot, lp)
 	register int i;
 	int flag;
 	off_t lseek();
+#ifdef	__386BSD__
+	off_t lbl_off; struct partition *pp = lp->d_partitions;
+#endif
 
 	lp->d_magic = DISKMAGIC;
 	lp->d_magic2 = DISKMAGIC;
 	lp->d_checksum = 0;
 	lp->d_checksum = dkcksum(lp);
 	if (rflag) {
+
+#ifdef	__386BSD__
+		/*
+		 * If 386BSD DOS partition is missing, or if 
+		 * the label to be written is not within partition,
+		 * prompt first. Need to allow this in case operator
+		 * wants to convert the drive for dedicated use.
+		 * In this case, partition 'a' had better start at 0,
+		 * otherwise we reject the request as meaningless. -wfj
+		 */
+
+		if (dosdp && dosdp->dp_typ == DOSPTYP_386BSD && pp->p_size &&
+			dosdp->dp_start == pp->p_offset) {
+			lbl_off = pp->p_offset;
+		} else {
+			if (dosdp) {
+				char c;
+
+				printf("overwriting disk with DOS partition table? (n):");
+				fflush(stdout);
+				c = getchar();
+				if (c != EOF && c != (int)'\n')
+					while (getchar() != (int)'\n')
+						;
+				if  (c == (int)'n')
+					exit(0);
+			}
+			lbl_off = 0;
+		}
+		(void)lseek(f, (off_t)(lbl_off * lp->d_secsize), L_SET);
+#endif
 		/*
 		 * First set the kernel disk label,
 		 * then write a label to the raw disk.
@@ -339,7 +414,7 @@ writelabel(f, boot, lp)
 			l_perror("ioctl DIOCSDINFO");
 			/*return (1);*/
 		}
-		(void)lseek(f, (off_t)0, L_SET);
+		
 		/*
 		 * write enable label sector before write (if necessary),
 		 * disable after writing.
@@ -357,8 +432,8 @@ writelabel(f, boot, lp)
 		l_perror("ioctl DIOCWDINFO");
 		return (1);
 	}
-#ifdef vax
-	if (lp->d_type == DTYPE_SMD && lp->d_flags & D_BADSECT) {
+
+	if (lp->d_type != DTYPE_SCSI && lp->d_flags & D_BADSECT) {
 		daddr_t alt;
 
 		alt = lp->d_ncylinders * lp->d_secpercyl - lp->d_nsectors;
@@ -372,7 +447,7 @@ writelabel(f, boot, lp)
 			}
 		}
 	}
-#endif
+
 	return (0);
 }
 
@@ -403,6 +478,7 @@ l_perror(s)
 	case EXDEV:
 		fprintf(stderr,
 	"Labeled partition or 'a' partition must start at beginning of disk\n");
+		fprintf(stderr, "or DOS partition\n");
 		break;
 
 	default:
@@ -411,6 +487,53 @@ l_perror(s)
 		break;
 	}
 }
+
+#ifdef __386BSD__
+/*
+ * Fetch DOS partition table from disk.
+ */
+struct dos_partition *
+readmbr(f)
+	int f;
+{
+	static struct dos_partition dos_partitions[NDOSPART];
+	struct dos_partition *dp, *bsdp;
+	char mbr[DEV_BSIZE];
+	int i, npart, nboot, njunk;
+
+	(void)lseek(f, (off_t)DOSBBSECTOR, L_SET);
+	if (read(f, mbr, sizeof(mbr)) < sizeof(mbr))
+		Perror("can't read master boot record");
+		
+	bcopy(mbr + DOSPARTOFF, dos_partitions, sizeof(dos_partitions));
+
+	/*
+	 * Don't (yet) know disk geometry (BIOS), use
+	 * partition table to find 386BSD partition, and obtain
+	 * disklabel from there.
+	 */
+	dp = dos_partitions;
+	npart = njunk = nboot = 0;
+	for (i = 0; i < NDOSPART; i++, dp++) {
+		if (dp->dp_flag != 0x80 && dp->dp_flag != 0) njunk++;
+		else
+			if (dp->dp_size > 0) npart++;
+		if (dp->dp_flag == 0x80) nboot++;
+		if (dp->dp_size && dp->dp_typ == DOSPTYP_386BSD)
+			bsdp = dp;
+	}
+
+	/* valid partition table? */
+	if (nboot != 1 || npart == 0 || njunk)
+		return (0);
+	/* if no bsd partition, pass back first one */
+	if (!bsdp) {
+		Warning("DOS partition table with no valid 386BSD partition");
+		return (dos_partitions);
+	}
+	return (bsdp);
+}
+#endif
 
 /*
  * Fetch disklabel for disk.
@@ -423,6 +546,16 @@ readlabel(f)
 	register struct disklabel *lp;
 
 	if (rflag) {
+#ifdef __386BSD__
+		off_t sectoffset;
+
+		if (dosdp && dosdp->dp_size && dosdp->dp_typ == DOSPTYP_386BSD)
+			sectoffset = dosdp->dp_start * DEV_BSIZE;
+		else
+			sectoffset = 0;
+		(void)lseek(f, sectoffset, L_SET);
+#endif
+			
 		if (read(f, bootarea, BBSIZE) < BBSIZE)
 			Perror(specname);
 		for (lp = (struct disklabel *)bootarea;
@@ -436,10 +569,12 @@ readlabel(f)
 		    dkcksum(lp) != 0) {
 			fprintf(stderr,
 	"Bad pack magic number (label is damaged, or pack is unlabeled)\n");
-			/* lp = (struct disklabel *)(bootarea + LABELOFFSET); */
-			exit (1);
+			/* lp = (struct disklabel *)(bootarea + LABELOFFSET);
+			exit (1); */
+			goto tryioctl;
 		}
 	} else {
+tryioctl:
 		lp = &lab;
 		if (ioctl(f, DIOCGDINFO, lp) < 0)
 			Perror("ioctl DIOCGDINFO");
@@ -1047,6 +1182,15 @@ checklabel(lp)
 		lp->d_secpercyl = lp->d_nsectors * lp->d_ntracks;
 	if (lp->d_secperunit == 0)
 		lp->d_secperunit = lp->d_secpercyl * lp->d_ncylinders;
+#ifdef __386BSD__notyet
+	if (dosdp && dosdp->dp_size && dosdp->dp_typ == DOSPTYP_386BSD
+		&& lp->d_secperunit > dosdp->dp_start + dosdp->dp_size) {
+		fprintf(stderr, "exceeds DOS partition size\n");
+		errors++;
+		lp->d_secperunit = dosdp->dp_start + dosdp->dp_size;
+	}
+	/* XXX should also check geometry against BIOS's idea */
+#endif
 	if (lp->d_bbsize == 0) {
 		fprintf(stderr, "boot block size %d\n", lp->d_bbsize);
 		errors++;

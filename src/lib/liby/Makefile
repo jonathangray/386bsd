@@ -3,4 +3,4 @@
 LIB=	y
 SRCS=	main.c yyerror.c
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

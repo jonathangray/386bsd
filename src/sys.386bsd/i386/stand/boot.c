@@ -62,6 +62,7 @@ char *files[] = { "386bsd", "386bsd.alt", "386bsd.old", "boot" , "vmunix", 0};
 int	retry = 0;
 extern struct disklabel disklabel;
 extern	int bootdev, cyloffset;
+static unsigned char *biosparams = (char *) 0x9ff00; /* XXX */
 
 /*
  * Boot program... loads /boot out of filesystem indicated by arguements.
@@ -74,13 +75,17 @@ main(dev, unit, off)
 	register int io;
 	register char **bootfile = files;
 	int howto = 0;
+	extern int scsisn; /* XXX */
 
-	/*printf("dev %x unit %x off %d\n", dev, unit, off);*/
-/*unit = off = 0;
-dev = 2;*/
 
 	/* are we a disk, if so look at disklabel and do things */
 	lp = &disklabel;
+	if (lp->d_type == DTYPE_SCSI)		/* XXX */
+		off = htonl(scsisn);		/* XXX */
+
+/*printf("cyl %x %x hd %x sect %x ", biosparams[0], biosparams[1], biosparams[2], biosparams[0xe]);
+	printf("dev %x unit %x off %d\n", dev, unit, off);*/
+
 	if (lp->d_magic == DISKMAGIC) {
 	    /*
 	     * Synthesize bootdev from dev, unit, type and partition
@@ -91,19 +96,19 @@ dev = 2;*/
 	     * to which drive to pass to top level bootstrap.
 	     */
 	    for (io = 0; io < lp->d_npartitions; io++) {
-#ifdef notyetSCSI
-		if (lp->d_type == DTYPE_SCSI) {
-			if (lp->d_partitions[io].p_offset == off)
-				break;
-		} else
-#endif
+		int sn;
+
 		if (lp->d_partitions[io].p_size == 0)
 			continue;
-		if (lp->d_partitions[io].p_offset == off*lp->d_secpercyl)
+		if (lp->d_type == DTYPE_SCSI)
+			sn = off;
+		else
+			sn = off * lp->d_secpercyl;
+		if (lp->d_partitions[io].p_offset == sn)
 			break;
 	    }
 
-	    if (io == 8) goto screwed;
+	    if (io == lp->d_npartitions) goto screwed;
             cyloffset = off;
 	} else {
 screwed:
@@ -122,7 +127,7 @@ screwed:
 /*printf("namei %s", *bootfile);*/
 		io = namei(*bootfile);
 		if (io > 2) {
-			copyunix(io, howto);
+			copyunix(io, howto, off);
 		} else
 			printf("File not found");
 
@@ -135,7 +140,7 @@ screwed:
 }
 
 /*ARGSUSED*/
-copyunix(io, howto)
+copyunix(io, howto, cyloff)
 	register io;
 {
 	struct exec x;
@@ -153,6 +158,11 @@ copyunix(io, howto)
 		return;
 	}
 
+	if (roundup(x.a_text, 4096) + x.a_data + x.a_bss > (unsigned)&fil) {
+		printf("File too big to load");
+		return;
+	}
+
 	off = 4096;
 	if (iread(&fil, off, (char *)0, x.a_text) != x.a_text)
 		goto shread;
@@ -166,6 +176,11 @@ copyunix(io, howto)
 		goto shread;
 
 	addr += x.a_data;
+
+	if (addr + x.a_bss > (unsigned) &fil) {
+		printf("Warning: bss overlaps bootstrap");
+		x.a_bss = (unsigned)addr - (unsigned)&fil;
+	}
 	bzero(addr, x.a_bss);
 
 	/* mask high order bits corresponding to relocated system base */
@@ -178,7 +193,9 @@ copyunix(io, howto)
 	}*/
 
 	/* howto, bootdev, cyl */
-	i = (*((int (*)()) x.a_entry))(3, bootdev, 0);
+	/*printf("entry %x [%x] ", x.a_entry, *(int *) x.a_entry);*/
+	bcopy(0x9ff00, 0x300, 0x20); /* XXX */
+	i = (*((int (*)()) x.a_entry))(howto, bootdev, off);
 
 	if (i) printf("Program exits with %d", i) ; 
 	return;

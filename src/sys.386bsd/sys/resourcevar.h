@@ -59,6 +59,8 @@ struct pstats {
 	struct	timeval p_start;	/* starting time */
 };
 
+void addupc(int, struct uprof *, int);	/* process profiling */ 
+
 /*
  * Kernel shareable process resource limits.  Because this structure
  * is moderately large but changes infrequently, it is normally

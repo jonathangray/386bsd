@@ -72,25 +72,85 @@ extern	unsigned short netmask; /* group of interrupts masked with splimp() */
 	pushl	$0 ; \
 	pushl	$ T_ASTFLT ; \
 	pushal ; \
-	push	%ds ; \
-	push	%es ; \
-	movw	$0x10, %ax ; \
+	nop ; \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$0x20, %al ; 	/* next, as soon as possible send EOI ... */ \
+	outb	%al, $ IO_ICU1 ; /* ... so in service bit may be cleared ...*/ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$0x20, %al ;	/* likewise, the other one as well */ \
+	outb	%al,$ IO_ICU2 ; \
+	inb	$0x84,%al ; \
+	pushl	%ds ; 		/* save our data and extra segments ... */ \
+	pushl	%es ; \
+	movw	$0x10, %ax ;	/* ... and reload with kernel's own */ \
 	movw	%ax, %ds ; \
-	movw	%ax,%es ; \
-	incl	_cnt+V_INTR ; \
+	movw	%ax, %es ; \
+	incl	_cnt+V_INTR ;	/* tally interrupts */ \
 	incl	_isa_intr + offst * 4 ; \
+	inb	$0x84,%al ; \
 	movzwl	_cpl,%eax ; \
 	pushl	%eax ; \
 	pushl	$ unit ; \
 	orw	mask ,%ax ; \
 	movw	%ax,_cpl ; \
 	orw	_imen,%ax ; \
-	NOP ; \
 	outb	%al,$ IO_ICU1+1 ; \
-	NOP ; \
+	inb	$0x84,%al ; \
 	movb	%ah,%al ; \
 	outb	%al,$ IO_ICU2+1	; \
-	NOP	; \
+	inb	$0x84,%al ; \
+	sti
+
+/* Mask a group of interrupts atomically */
+#define	INTRSTRAY(unit,mask,offst) \
+	pushl	$0 ; \
+	pushl	$ T_ASTFLT ; \
+	pushal ; \
+	nop ; \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$3, %al ; 	/* look at ISR ... */ \
+	outb	%al, $ IO_ICU1 ; /* ... ...*/ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$3, %al ; 	/* look at ISR ... */ \
+	outb	%al, $ IO_ICU2 ; /* ... ...*/ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	inb	$ IO_ICU1, %al ;	/* grab ISR */ \
+	movb	%al, %dl ;	/* grab ISR */ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$2, %al ; 	/* back to look at IRR ... */ \
+	outb	%al, $ IO_ICU1 ; /* ... ...*/ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$2, %al ; 	/* back to look at IRR ... */ \
+	outb	%al, $ IO_ICU2 ; /* ... ...*/ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	inb	$ IO_ICU2, %al ;	/* grab ISR */ \
+	movb	%al, %dh ;	/* grab ISR */ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$0x20, %al ; 	/* next, as soon as possible send EOI ... */ \
+	outb	%al, $ IO_ICU1 ; /* ... so in service bit may be cleared ...*/ \
+	inb	$0x84, %al ;	/* ... ASAP */ \
+	movb	$0x20, %al ;	/* likewise, the other one as well */ \
+	outb	%al,$ IO_ICU2 ; \
+	inb	$0x84,%al ; \
+	pushl	%ds ; 		/* save our data and extra segments ... */ \
+	pushl	%es ; \
+	movw	$0x10, %ax ;	/* ... and reload with kernel's own */ \
+	movw	%ax, %ds ; \
+	movw	%ax, %es ; \
+	inb	$0x84,%al ; \
+	movzwl	_cpl,%eax ; \
+	pushl	%eax ; \
+	movzwl	%dx,%eax ; \
+	shll	$8,%eax ; \
+	movb	$ unit , %al ; \
+	pushl	%eax ; \
+	orw	mask ,%ax ; \
+	movw	%ax,_cpl ; \
+	orw	_imen,%ax ; \
+	outb	%al,$ IO_ICU1+1 ; \
+	inb	$0x84,%al ; \
+	movb	%ah,%al ; \
+	outb	%al,$ IO_ICU2+1	; \
 	inb	$0x84,%al ; \
 	sti
 
@@ -98,15 +158,10 @@ extern	unsigned short netmask; /* group of interrupts masked with splimp() */
 
 /* First eight interrupts (ICU1) */
 #define	INTREXIT1	\
-	movb	$0x20,%al ; \
-	outb	%al,$ IO_ICU1 ; \
 	jmp	doreti
 
 /* Second eight interrupts (ICU2) */
 #define	INTREXIT2	\
-	movb	$0x20,%al ; \
-	outb	%al,$ IO_ICU1 ; \
-	outb	%al,$ IO_ICU2 ; \
 	jmp	doreti
 
 #endif

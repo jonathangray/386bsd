@@ -56,11 +56,12 @@ static char rcsid[] = "$Header: /usr/src/sys.386bsd/kern/RCS/init_main.c,v 1.3 9
 
 #include "vm/vm.h"
 
-char	copyright[] =
-"386BSD Release 0.0 by William and Lynne Jolitz\n\
-Copyright (c) 1989,1990,1991,1992 William F. Jolitz. All rights reserved.\n\
-Based on BSD Networking Software, Release 2 by UCB EECS Department \n\
-Copyright (c) 1982,1986,1989,1991 The Regents of the University of California.\nAll rights reserved.\n";
+char	copyright1[] =
+"386BSD Release 0.1 by William and Lynne Jolitz.";
+char	copyright2[] =
+"Copyright (c) 1989,1990,1991,1992 William F. Jolitz. All rights reserved.\n\
+Based in part on work by the 386BSD User Community and the\n\
+BSD Networking Software, Release 2 by UCB EECS Department.\n";
 
 /*
  * Components of process 0;
@@ -107,8 +108,10 @@ main()
 	 * Attempt to find console and initialize
 	 * in case of early panic or other messages.
 	 */
+	startrtclock();
 	consinit();
-	printf(copyright);
+	printf("\033[3;15x%s\033[0x [0.1.%s]\n", copyright1, version+9);
+	printf(copyright2);
 
 	vm_mem_init();
 	kmeminit();
@@ -199,7 +202,6 @@ main()
 	if (bdevvp(swapdev, &swapdev_vp) || bdevvp(rootdev, &rootvp))
 		panic("can't setup bdevvp's");
 
-	startrtclock();
 #if defined(vax)
 #include "kg.h"
 #if NKG > 0
@@ -297,11 +299,12 @@ main()
 			panic("init: couldn't allocate at zero");
 
 		/* need just enough stack to exec from */
-		addr = trunc_page(USRSTACK - PAGE_SIZE);
+		addr = trunc_page(USRSTACK - MAXSSIZ);
 		if (vm_allocate(&p->p_vmspace->vm_map, &addr,
-		    PAGE_SIZE, FALSE) != KERN_SUCCESS)
+		    MAXSSIZ, FALSE) != KERN_SUCCESS)
 			panic("vm_allocate init stack");
 		p->p_vmspace->vm_maxsaddr = (caddr_t)addr;
+		p->p_vmspace->vm_ssize = 1;
 		(void) copyout((caddr_t)icode, (caddr_t)0, (unsigned)szicode);
 		(void) copyout(initflags, (caddr_t)szicode, sizeof(initflags));
 		return;			/* returns to icode */

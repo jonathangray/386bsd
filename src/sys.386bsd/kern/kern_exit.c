@@ -128,6 +128,7 @@ exit(p, rv)
 
 	if (p->p_pid == 1)
 		panic("init died");
+
 	if (SESS_LEADER(p)) {
 		register struct session *sp = p->p_session;
 

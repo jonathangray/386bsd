@@ -104,6 +104,7 @@ static char sccsid[] = "@(#)pow.c	5.7 (Berkeley) 10/9/90";
  */
 
 #include <errno.h>
+#include <limits.h>
 #include "mathimpl.h"
 
 vc(ln2hi,  6.9314718055829871446E-1  ,7217,4031,0000,f7d0,   0, .B17217F7D00000)
@@ -125,7 +126,7 @@ ic(sqrt2,  1.4142135623730951455E0,     0, 1.6A09E667F3BCD)
 
 const static double zero=0.0, half=1.0/2.0, one=1.0, two=2.0, negone= -1.0;
 
-static double pow_p();
+static double pow_p(double, double);
 
 double pow(x,y)  	
 double x,y;
@@ -179,6 +180,7 @@ double x,y;
 #ifdef tahoe
 	double tahoe_tmp;
 #endif	/* tahoe */
+	double errtmp;
         float sx,sy;
 	long k=0;
         int n,m;
@@ -211,8 +213,9 @@ double x,y;
         	s=y*(n+invln2*t);
                 m=s+copysign(half,s);   /* m := nint(y*log(x)) */ 
 		k=y; 
-		if((double)k==y) {	/* if y is an integer */
-		    k = m-k*n;
+		if(y > (double)LONG_MIN && y < (double)LONG_MAX
+		  && (double)(long)y==y) {     /* y is an integer */
+		    k = m-(long)y*n;
 		    sx=t; tx+=(t-sx); }
 		else	{		/* if y is not an integer */    
 		    k =m;
@@ -238,7 +241,7 @@ double x,y;
 	    
 	    else
 		/* exp(+- tiny) = 1 with inexact flag */
-			{ln2hi+ln2lo; return(one);}
+			{errtmp=ln2hi+ln2lo; return(one);}
 	    else if(copysign(one,y)*(n+invln2*t) <zero)
 		/* exp(-(big#)) underflows to zero */
 	        	return(scalb(one,-5000)); 

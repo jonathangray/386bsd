@@ -763,5 +763,5 @@ unp_discard(fp)
 
 	fp->f_msgcount--;
 	unp_rights--;
-	(void) closef(fp);
+	(void) closef(fp, curproc);
 }

@@ -58,7 +58,6 @@ static char rcsid[] = "$Header: /usr/src/sys.386bsd/i386/i386/RCS/machdep.c,v 1.
 #include "vm/vm_kern.h"
 #include "vm/vm_page.h"
 
-vm_map_t buffer_map;
 extern vm_offset_t avail_end;
 
 #include "machine/cpu.h"
@@ -82,6 +81,7 @@ int	bufpages = BUFPAGES;
 int	bufpages = 0;
 #endif
 int	msgbufmapped;		/* set when safe to use msgbuf */
+extern int freebufspace;
 
 /*
  * Machine-dependent startup code
@@ -97,8 +97,7 @@ int biosmem;
 
 extern cyloffset;
 
-cpu_startup(firstaddr)
-	int firstaddr;
+cpu_startup()
 {
 	register int unixsize;
 	register unsigned i;
@@ -109,6 +108,7 @@ cpu_startup(firstaddr)
 	extern long Usrptsize;
 	vm_offset_t minaddr, maxaddr;
 	vm_size_t size;
+	int firstaddr;
 
 	/*
 	 * Initialize error message buffer (at end of core).
@@ -131,7 +131,6 @@ cpu_startup(firstaddr)
 
 	/*
 	 * Allocate space for system data structures.
-	 * The first available real memory address is in "firstaddr".
 	 * The first available kernel virtual address is in "v".
 	 * As pages of kernel virtual memory are allocated, "v" is incremented.
 	 * As pages of memory are allocated and cleared,
@@ -173,6 +172,7 @@ again:
 		if (nbuf < 16)
 			nbuf = 16;
 	}
+	freebufspace = bufpages * NBPG;
 	if (nswbuf == 0) {
 		nswbuf = (nbuf / 2) &~ 1;	/* force even */
 		if (nswbuf > 256)
@@ -197,11 +197,10 @@ again:
 	if ((vm_size_t)(v - firstaddr) != size)
 		panic("startup: table size inconsistency");
 	/*
-	 * Allocate a submap for exec arguments.  This map effectively
-	 * limits the number of processes exec'ing at any time.
+	 * Allocate a submap for buffer space allocations.
 	 */
-	exec_map = kmem_suballoc(kernel_map, &minaddr, &maxaddr,
-				 16*NCARGS, TRUE);
+	buffer_map = kmem_suballoc(kernel_map, &minaddr, &maxaddr,
+				 bufpages*NBPG, TRUE);
 	/*
 	 * Allocate a submap for physio
 	 */
@@ -318,8 +317,8 @@ sendsig(catcher, sig, mask, code)
 				- sizeof(struct sigframe));
 	}
 
-	if ((unsigned)fp <= USRSTACK - ctob(p->p_vmspace->vm_ssize)) 
-		(void)grow((unsigned)fp);
+	if ((unsigned)fp <= (unsigned)p->p_vmspace->vm_maxsaddr + MAXSSIZ - ctob(p->p_vmspace->vm_ssize)) 
+		(void)grow(p, (unsigned)fp);
 
 	if (useracc((caddr_t)fp, sizeof (struct sigframe), B_WRITE) == 0) {
 		/*
@@ -426,6 +425,7 @@ sigreturn(p, uap, retval)
 }
 
 int	waittime = -1;
+struct pcb dumppcb;
 
 boot(arghowto)
 	int arghowto;
@@ -434,7 +434,13 @@ boot(arghowto)
 	register int howto;		/* r11 == how to boot */
 	register int devtype;		/* r10 == major of root dev */
 	extern char *panicstr;
+	extern int cold;
+	int nomsg = 1;
 
+	if(cold) {
+		printf("hit reset please");
+		for(;;);
+	}
 	howto = arghowto;
 	if ((howto&RB_NOSYNC) == 0 && waittime < 0 && bfreelist[0].b_forw) {
 		register struct buf *bp;
@@ -442,7 +448,6 @@ boot(arghowto)
 
 		waittime = 0;
 		(void) splnet();
-		printf("syncing disks... ");
 		/*
 		 * Release inodes held by texts before update.
 		 */
@@ -457,23 +462,27 @@ boot(arghowto)
 					nbusy++;
 			if (nbusy == 0)
 				break;
-			printf("%d ", nbusy);
+			if (nomsg) {
+				printf("updating disks before rebooting... ");
+				nomsg = 0;
+			}
+			/* printf("%d ", nbusy); */
 			DELAY(40000 * iter);
 		}
 		if (nbusy)
-			printf("giving up\n");
-		else
-			printf("done\n");
+			printf(" failed!\n");
+		else if (nomsg == 0)
+			printf("succeded.\n");
 		DELAY(10000);			/* wait for printf to finish */
 	}
 	splhigh();
 	devtype = major(rootdev);
 	if (howto&RB_HALT) {
-		printf("halting (in tight loop); hit reset\n\n");
-		splx(0xfffd);	/* all but keyboard XXX */
-		for (;;) ;
+		pg("\nThe operating system has halted. Please press any key to reboot.\n\n");
 	} else {
 		if (howto & RB_DUMP) {
+			savectx(&dumppcb, 0);
+			dumppcb.pcb_ptd = rcr3();
 			dumpsys();	
 			/*NOTREACHED*/
 		}
@@ -482,7 +491,7 @@ boot(arghowto)
 	dummy = 0; dummy = dummy;
 	printf("howto %d, devtype %d\n", arghowto, devtype);
 #endif
-	reset_cpu();
+	cpu_reset();
 	for(;;) ;
 	/*NOTREACHED*/
 }
@@ -501,33 +510,37 @@ dumpsys()
 		return;
 	if ((minor(dumpdev)&07) != 1)
 		return;
+	printf("\nThe operating system is saving a copy of RAM memory to device %x, offset %d\n\
+(hit any key to abort): [ amount left to save (MB) ] ", dumpdev, dumplo);
 	dumpsize = physmem;
-	printf("\ndumping to dev %x, offset %d\n", dumpdev, dumplo);
-	printf("dump ");
 	switch ((*bdevsw[major(dumpdev)].d_dump)(dumpdev)) {
 
 	case ENXIO:
-		printf("device bad\n");
+		printf("-- device bad\n");
 		break;
 
 	case EFAULT:
-		printf("device not ready\n");
+		printf("-- device not ready\n");
 		break;
 
 	case EINVAL:
-		printf("area improper\n");
+		printf("-- area improper\n");
 		break;
 
 	case EIO:
-		printf("i/o error\n");
+		printf("-- i/o error\n");
+		break;
+
+	case EINTR:
+		printf("-- aborted from console\n");
 		break;
 
 	default:
-		printf("succeeded\n");
+		printf(" succeeded\n");
 		break;
 	}
-	printf("\n\n");
-	DELAY(1000);
+	printf("system rebooting.\n\n");
+	DELAY(10000);
 }
 
 microtime(tvp)
@@ -591,7 +604,7 @@ setregs(p, entry)
 	p->p_addr->u_pcb.pcb_flags = 0;	/* no fp at all */
 	load_cr0(rcr0() | CR0_EM);	/* start emulating */
 #ifdef	NPX
-	npxinit(0x262);
+	npxinit(__INITIAL_NPXCW__);
 #endif
 }
 
@@ -616,7 +629,7 @@ setregs(p, entry)
 union descriptor gdt[GPROC0_SEL+1];
 
 /* interrupt descriptor table */
-struct gate_descriptor idt[32+16];
+struct gate_descriptor idt[NIDT];
 
 /* local descriptor table */
 union descriptor ldt[5];
@@ -746,15 +759,6 @@ struct soft_segment_descriptor ldt_segs[] = {
 	1,			/* default 32 vs 16 bit size */
 	1  			/* limit granularity (byte/page units)*/ } };
 
-/* table descriptors - used to load tables by microp */
-struct region_descriptor r_gdt = {
-	sizeof(gdt)-1,(char *)gdt
-};
-
-struct region_descriptor r_idt = {
-	sizeof(idt)-1,(char *)idt
-};
-
 setidt(idx, func, typ, dpl) char *func; {
 	struct gate_descriptor *ip = idt + idx;
 
@@ -786,6 +790,9 @@ init386(first) { extern ssdtosd(), lgdt(), lidt(), lldt(), etext;
 	unsigned biosbasemem, biosextmem;
 	struct gate_descriptor *gdp;
 	extern int sigcode,szsigcode;
+	/* table descriptors - used to load tables by microp */
+	struct region_descriptor r_gdt, r_idt;
+
 
 	proc0.p_addr = proc0paddr;
 
@@ -843,15 +850,27 @@ init386(first) { extern ssdtosd(), lgdt(), lidt(), lldt(), etext;
 	isa_defaultirq();
 #endif
 
-	lgdt(gdt, sizeof(gdt)-1);
-	lidt(idt, sizeof(idt)-1);
+	r_gdt.rd_limit = sizeof(gdt)-1;
+	r_gdt.rd_base = (int) gdt;
+	lgdt(&r_gdt);
+	r_idt.rd_limit = sizeof(idt)-1;
+	r_idt.rd_base = (int) idt;
+	lidt(&r_idt);
 	lldt(GSEL(GLDT_SEL, SEL_KPL));
+
+#include "ddb.h"
+#if NDDB > 0
+	kdb_init();
+	if (boothowto & RB_KDB)
+		Debugger();
+#endif
 
 	/* Use BIOS values stored in RTC CMOS RAM, since probing
 	 * breaks certain 386 AT relics.
 	 */
 	biosbasemem = rtcin(RTC_BASELO)+ (rtcin(RTC_BASEHI)<<8);
 	biosextmem = rtcin(RTC_EXTLO)+ (rtcin(RTC_EXTHI)<<8);
+/*printf("bios base %d ext %d ", biosbasemem, biosextmem);*/
 
 	/* if either bad, just assume base memory */
 	if (biosbasemem == 0xffff || biosextmem == 0xffff) {
@@ -862,7 +881,7 @@ init386(first) { extern ssdtosd(), lgdt(), lidt(), lldt(), etext;
 		pagesinbase = 640/4 - first/NBPG;
 		pagesinext = biosextmem/4;
 		/* use greater of either base or extended memory. do this
-		 * until I reinstitue discontigous allocation of vm_page
+		 * until I reinstitue discontiguous allocation of vm_page
 		 * array.
 		 */
 		if (pagesinbase > pagesinext)
@@ -874,6 +893,9 @@ init386(first) { extern ssdtosd(), lgdt(), lidt(), lldt(), etext;
 	}
 	maxmem = Maxmem - 1;	/* highest page of usable memory */
 	physmem = maxmem;	/* number of pages of physmem addr space */
+/*printf("using first 0x%x to 0x%x\n ", first, maxmem*NBPG);*/
+	if (maxmem < 2048/4)
+		printf("Too little RAM memory. Warning, running in degraded mode.\n");
 
 	/* call pmap initialization to make new kernel address space */
 	pmap_bootstrap (first, 0);
@@ -985,7 +1007,7 @@ vmunaccess() {}
  */
 copyinstr(fromaddr, toaddr, maxlength, lencopied) u_int *lencopied, maxlength;
 	void *toaddr, *fromaddr; {
-	u_int c,tally;
+	int c,tally;
 
 	tally = 0;
 	while (maxlength--) {
@@ -997,11 +1019,11 @@ copyinstr(fromaddr, toaddr, maxlength, lencopied) u_int *lencopied, maxlength;
 		tally++;
 		*(char *)toaddr++ = (char) c;
 		if (c == 0){
-			if(lencopied) *lencopied = tally;
+			if(lencopied) *lencopied = (u_int)tally;
 			return(0);
 		}
 	}
-	if(lencopied) *lencopied = tally;
+	if(lencopied) *lencopied = (u_int)tally;
 	return(ENAMETOOLONG);
 }
 

@@ -650,7 +650,7 @@ ocreat(p, uap, retval)
 	} *uap;
 	int *retval;
 {
-	struct args {
+	struct newargs {
 		char	*fname;
 		int	mode;
 		int	crtmode;
@@ -659,7 +659,7 @@ ocreat(p, uap, retval)
 	openuap.fname = uap->fname;
 	openuap.crtmode = uap->fmode;
 	openuap.mode = O_WRONLY | O_CREAT | O_TRUNC;
-	return (open(p, &openuap, retval));
+	return (open(p, (struct args *)&openuap, retval));
 }
 #endif /* COMPAT_43 */
 

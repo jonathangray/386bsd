@@ -3,11 +3,12 @@
  * Foundation.
  *
  * Modified 1991 by Donn Seeley at UUNET Technologies, Inc.
+ * [and modified yet again -wfj 1992]
  *
  *	@(#)tm-i386b.h	6.2 (Berkeley) 5/8/91
  */
 
-/* Definitions for BSD Intel 386; derived from tm-seq386.h.
+/* Definitions for 386BSD ; derived from tm-seq386.h.
    Copyright (C) 1988 Free Software Foundation, Inc.
 
 This file is part of GNU CC.
@@ -38,7 +39,7 @@ the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.  */
 
 /* Specify predefined symbols in preprocessor.  */
 
-#define CPP_PREDEFINES "-Dunix -Di386 -Di386b"
+#define CPP_PREDEFINES "-Dunix -Di386 -D__386BSD__"
 
 /* Don't permit / as a comment start character.  */
 

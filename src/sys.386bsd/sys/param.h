@@ -33,7 +33,8 @@
  *	@(#)param.h	7.23 (Berkeley) 5/6/91
  */
 
-#define	BSD	199103		/* March, 1991 system version (year & month) */
+#define	__386BSDREL__	0.1	/* Release 0.1 */
+#define	BSD	199103	 /* CSRG: March, 1991 system version (year & month) */
 #define BSD4_3	1
 #define BSD4_4	0.5
 

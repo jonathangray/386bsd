@@ -467,7 +467,7 @@ groupmember(gid, cred)
  */
 suser(cred, acflag)
 	struct ucred *cred;
-	short *acflag;
+	u_short *acflag;
 {
 	if (cred->cr_uid == 0) {
 		if (acflag)

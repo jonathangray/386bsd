@@ -36,7 +36,11 @@
 #ifdef DBM
 static char sccsid[] = "@(#)alias.c	5.22 (Berkeley) 3/2/91 (with DBM)";
 #else
+#ifdef USE_DB
+static char sccsid[] = "@(#)alias.c	5.22 (Berkeley) 3/2/91 (with DB)";
+#else
 static char sccsid[] = "@(#)alias.c	5.22 (Berkeley) 3/2/91 (without DBM)";
+#endif
 #endif
 #endif /* not lint */
 
@@ -84,6 +88,13 @@ typedef struct
 } DATUM;
 extern DATUM fetch();
 #endif DBM
+# ifdef USE_DB
+# include <db.h>
+/*
+** DB is a database structure containing pointers to access methods.
+*/
+static DB *aliasdb;
+# endif USE_DB
 
 alias(a, sendq)
 	register ADDRESS *a;
@@ -155,12 +166,22 @@ aliaslookup(name)
 	rhs = fetch(lhs);
 	return (rhs.dptr);
 # else DBM
+# ifdef USE_DB
+	DBT rhs, lhs;
+
+	/* create a key for fetch */
+	lhs.data = name;
+	lhs.size = strlen(name) + 1;
+	aliasdb->get(aliasdb, &lhs, &rhs, 0);
+	return (rhs.data);
+# else USE_DB
 	register STAB *s;
 
 	s = stab(name, ST_ALIAS, ST_FIND);
 	if (s == NULL)
 		return (NULL);
 	return (s->s_alias);
+# endif USE_DB
 # endif DBM
 }
 /*
@@ -182,17 +203,18 @@ aliaslookup(name)
 */
 
 # define DBMMODE	0644
+# define DBEXTENSION	".db"	/* extension for the database filename */
 
 initaliases(aliasfile, init)
 	char *aliasfile;
 	bool init;
 {
-#ifdef DBM
+#if defined (DBM) || defined (USE_DB)
 	int atcnt;
 	time_t modtime;
 	bool automatic = FALSE;
 	char buf[MAXNAME];
-#endif DBM
+#endif
 	struct stat stb;
 	static bool initialized = FALSE;
 	static int readaliases();
@@ -210,7 +232,7 @@ initaliases(aliasfile, init)
 		return;
 	}
 
-# ifdef DBM
+#if defined (DBM) || defined (USE_DB)
 	/*
 	**  Check to see that the alias file is complete.
 	**	If not, we will assume that someone died, and it is up
@@ -218,7 +240,23 @@ initaliases(aliasfile, init)
 	*/
 
 	if (!init)
+# ifdef DBM
 		dbminit(aliasfile);
+# endif
+# ifdef USE_DB
+	  {
+	    (void) strcpy(buf, aliasfile);
+	    (void) strcat(buf, DBEXTENSION);
+	    if (aliasdb) aliasdb->close (aliasdb);
+	    aliasdb = btree_open (buf, O_RDWR, DBMMODE, 0);
+	    if (aliasdb == NULL)
+	      {
+		syserr("Cannot open database %s", buf);
+		NoAlias = TRUE;
+		return;
+	      }
+	  }
+# endif USE_DB
 	atcnt = SafeAlias * 2;
 	if (atcnt > 0)
 	{
@@ -234,10 +272,23 @@ initaliases(aliasfile, init)
 			**	added before the sleep(30).
 			*/
 
+# ifdef USE_DB
+		        if(aliasdb)
+				aliasdb->close (aliasdb); 
+# endif USE_DB
 			sleep(30);
 # ifdef NDBM
 			dbminit(aliasfile);
 # endif NDBM
+# ifdef USE_DB
+			aliasdb = btree_open (buf, O_RDWR, DBMMODE, 0);
+			if (aliasdb == NULL)
+			  {
+			    syserr("Cannot open database %s", buf);
+			    NoAlias = TRUE;
+			    return;
+			  }
+# endif USE_DB
 		}
 	}
 	else
@@ -252,7 +303,12 @@ initaliases(aliasfile, init)
 
 	modtime = stb.st_mtime;
 	(void) strcpy(buf, aliasfile);
+# ifdef DBM
 	(void) strcat(buf, ".pag");
+# endif DBM
+# ifdef USE_DB
+	(void) strcat(buf, DBEXTENSION);
+# endif USE_DB
 	stb.st_ino = 0;
 	if (!init && (stat(buf, &stb) < 0 || stb.st_mtime < modtime || atcnt < 0))
 	{
@@ -295,10 +351,13 @@ initaliases(aliasfile, init)
 		}
 #endif LOG
 		readaliases(aliasfile, TRUE);
+# ifdef USE_DB
+		aliasdb->sync (aliasdb);
+# endif USE_DB
 	}
-# else DBM
+#else /* defined (DBM) || defined (USE_DB) */
 	readaliases(aliasfile, init);
-# endif DBM
+#endif /* defined (DBM) || defined (USE_DB) */
 }
 /*
 **  READALIASES -- read and process the alias file.
@@ -342,7 +401,7 @@ readaliases(aliasfile, init)
 		return;
 	}
 
-# ifdef DBM
+#if defined (DBM) || defined (USE_DB)
 	/* see if someone else is rebuilding the alias file already */
 	if (flock(fileno(af), LOCK_EX | LOCK_NB) < 0 && errno == EWOULDBLOCK)
 	{
@@ -365,7 +424,11 @@ readaliases(aliasfile, init)
 	if (init)
 	{
 		oldsigint = signal(SIGINT, SIG_IGN);
+# ifdef USE_DB
+		if (aliasdb) aliasdb->close (aliasdb);
+# endif USE_DB
 		(void) strcpy(line, aliasfile);
+# ifdef DBM
 		(void) strcat(line, ".dir");
 		if (close(creat(line, DBMMODE)) < 0)
 		{
@@ -382,8 +445,22 @@ readaliases(aliasfile, init)
 			return;
 		}
 		dbminit(aliasfile);
-	}
 # endif DBM
+# ifdef USE_DB
+		(void) strcat(line, DBEXTENSION);
+		/* unconditionally remove the database file so that a
+		   corrupt file cannot cause the following open to fail */
+		unlink (line);
+		aliasdb = btree_open (line, O_RDWR|O_CREAT, DBMMODE, 0);
+		if (aliasdb == NULL)
+		{
+			syserr("Cannot open database file %s", line);
+			(void) signal(SIGINT, oldsigint);
+			return;
+		}
+# endif USE_DB
+	}
+#endif /* defined (DBM) || defined (USE_DB) */
 
 	/*
 	**  Read and interpret lines
@@ -512,6 +589,20 @@ readaliases(aliasfile, init)
 		}
 		else
 # endif DBM
+# ifdef USE_DB
+		if (init)
+		{
+			DBT key, content;
+
+			key.size = lhssize;
+			key.data = al.q_user;
+			content.size = rhssize;
+			content.data = rhs;
+
+			aliasdb->put (aliasdb, &key, &content, R_PUT);
+		}
+		else
+# endif USE_DB
 		{
 			s = stab(al.q_user, ST_ALIAS, ST_ENTER);
 			s->s_alias = newstr(rhs);
@@ -538,6 +629,20 @@ readaliases(aliasfile, init)
 		(void) signal(SIGINT, oldsigint);
 	}
 # endif DBM
+# ifdef USE_DB
+	if (init)
+	{
+		/* add the distinquished alias "@" */
+		DBT key;
+
+		key.size = 2;
+		key.data = "@";
+		aliasdb->put (aliasdb, &key, &key, R_PUT);
+
+		/* restore the old signal */
+		(void) signal(SIGINT, oldsigint);
+	}
+# endif USE_DB
 
 	/* closing the alias file drops the lock */
 	(void) fclose(af);

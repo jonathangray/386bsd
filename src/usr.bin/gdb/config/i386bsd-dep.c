@@ -666,9 +666,31 @@ vtophys(addr)
 			return (~0);
 
 		/*
-		 * For p0/p1 address, user-level page table should be i                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ndif
+		 * For p0/p1 address, user-level page table should be in
+		 * kernel vm.  Do second-level indirect by recursing.
+		 */
+		if (!INKERNEL(addr))
+			return (~0);
+
+		addr = vtophys(addr);
+	}
+	/*
+	 * Addr is now address of the pte of the page we are interested in;
+	 * get the pte and paste up the physical address.
+	 */
+	if (physrd(addr, (char *) &pte, sizeof(pte)))
+		return (~0);
+
+	if (pte.pg_v == 0 && (pte.pg_fod || pte.pg_pfnum == 0))
+		return (~0);
+
+	addr = (CORE_ADDR)ptob(pte.pg_pfnum) + (oldaddr & PGOFSET);
+#if 0
+	printf("vtophys(%x) -> %x\n", oldaddr, addr);
+#endif
 	return (addr);
 }
+
 #endif
 
 static
@@ -747,9 +769,7 @@ setup_kernel_debugging()
 	 * pcb where "panic" saved registers in first thing in current
 	 * u area.
 	 */
-#ifdef NEWVM
-	read_pcb(vtophys(kstack));
-#else
+#ifndef NEWVM
 	read_pcb(vtophys(ksym_lookup("u")));
 #endif
 	found_pcb = 1;
@@ -769,7 +789,12 @@ setup_kernel_debugging()
 		if (*cp)
 			*cp = '\0';
 		printf("panic: %s\n", buf);
+		read_pcb(ksym_lookup("dumppcb") - KERNOFF);
 	}
+#ifdef NEWVM
+	else
+	read_pcb(vtophys(kstack));
+#endif
 
 	stack_start = USRSTACK;
 	stack_end = USRSTACK + ctob(UPAGES);
@@ -1531,7 +1556,9 @@ static void
 setregmap(flags)
 	int flags;
 {
-#ifdef EX_TRAPSTK
+#ifdef FM_TRAP
+	regmap = flags & FM_TRAP ? trapmap: syscallmap;
+#elif EX_TRAPSTK
 	regmap = flags & EX_TRAPSTK ? trapmap : syscallmap;
 #else
 	regmap = trapmap;	/* the lesser evil */
@@ -1759,7 +1786,7 @@ i386_float_info ()
 {
   struct user u; /* just for address computations */
   int i;
-#ifndef i386b
+#ifndef __386BSD__
   /* fpstate defined in <sys/user.h> */
   struct fpstate *fpstatep;
   char buf[sizeof (struct fpstate) + 2 * sizeof (int)];

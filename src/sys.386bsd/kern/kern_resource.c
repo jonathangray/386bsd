@@ -231,15 +231,17 @@ setrlimit(p, uap, retval)
 			vm_offset_t addr;
 			vm_size_t size;
 			vm_prot_t prot;
+			struct vmspace *vm = p->p_vmspace;
 
+			addr = (unsigned) vm->vm_maxsaddr + MAXSSIZ;
 			if (alim.rlim_cur > alimp->rlim_cur) {
 				prot = VM_PROT_ALL;
 				size = alim.rlim_cur - alimp->rlim_cur;
-				addr = USRSTACK - alim.rlim_cur;
+				addr -= alim.rlim_cur;
 			} else {
 				prot = VM_PROT_NONE;
 				size = alimp->rlim_cur - alim.rlim_cur;
-				addr = USRSTACK - alimp->rlim_cur;
+				addr -= alimp->rlim_cur;
 			}
 			addr = trunc_page(addr);
 			size = round_page(size);

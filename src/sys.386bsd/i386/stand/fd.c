@@ -50,7 +50,6 @@
 
 #define NFD 2
 #define FDBLK 512
-#define NUMTYPES 4
 
 extern struct disklabel disklabel;
 
@@ -65,15 +64,19 @@ struct fd_type {
 	int	trans;			/* transfer speed code       */
 };
 
-struct fd_type fd_types[NUMTYPES] = {
+struct fd_type fd_types[] = {
  	{ 18,2,0xFF,0x1B,80,2880,1,0 },	/* 1.44 meg HD 3.5in floppy    */
 	{ 15,2,0xFF,0x1B,80,2400,1,0 },	/* 1.2 meg HD floppy           */
+	/* need 720K 3.5in here as well */
+#ifdef noway
 	{ 9,2,0xFF,0x23,40,720,2,1 },	/* 360k floppy in 1.2meg drive */
 	{ 9,2,0xFF,0x2A,40,720,1,1 },	/* 360k floppy in DD drive     */
+#endif
 };
 
 
 /* state needed for current transfer */
+static int probetype;
 static int fd_type;
 static int fd_motor;
 static int fd_retry;
@@ -102,16 +105,16 @@ int func;
 printf("fdstrat ");
 #endif
 	unit = io->i_unit;
-	fd_type = io->i_part;
+	/*fd_type = io->i_part;*/
 
 	/*
 	 * Set up block calculations.
 	 */
         iosize = io->i_cc / FDBLK;
 	blknum = (unsigned long) io->i_bn * DEV_BSIZE / FDBLK;
- 	nblocks = disklabel.d_secperunit;
+ 	nblocks = fd_types[fd_type].size /*  disklabel.d_secperunit */;
 	if ((blknum + iosize > nblocks) || blknum < 0) {
-#ifdef SMALL
+#ifdef nope
 		printf("bn = %d; sectors = %d; type = %d; fssize = %d ",
 			blknum, iosize, fd_type, nblocks);
                 printf("fdstrategy - I/O out of filesystem boundaries\n");
@@ -131,46 +134,53 @@ printf("fdstrat ");
         return(io->i_cc);
 }
 
+int ccyl = -1;
+
 int
 fdio(func, unit, blknum, address)
 int func,unit,blknum;
 char *address;
 {
-	int i,j,cyl,sectrac,sec,head,numretry;
+	int i,j, cyl, sectrac,sec,head,numretry;
 	struct fd_type *ft;
 
 /*printf("fdio ");*/
  	ft = &fd_types[fd_type];
 
- 	sectrac = disklabel.d_nsectors;
-	cyl = blknum / disklabel.d_secpercyl;
+ 	sectrac = ft->sectrac;
+	cyl = blknum / (sectrac*2);
 	numretry = NUMRETRY;
 
-	if (func == F_WRITE) bcopy(address,bounce,FDBLK);
+	if (func == F_WRITE)
+		bcopy(address,bounce,FDBLK);
 
 retry:
+	if (ccyl != cyl) {
 	out_fdc(15);	/* Seek function */
 	out_fdc(unit);	/* Drive number */
 	out_fdc(cyl);
 
 	waitio();
+	}
 
 	out_fdc(0x8);
 	i = in_fdc(); j = in_fdc();
 	if (!(i&0x20) || (cyl != j)) {
 		numretry--;
+		ccyl = j;
 		if (numretry) goto retry;
-#ifdef SMALL
+
 		printf("Seek error %d, req = %d, at = %d\n",i,cyl,j);
 		printf("unit %d, type %d, sectrac %d, blknum %d\n",
 			unit,fd_type,sectrac,blknum);
-#endif
+
 		return -1;
 	}
+	ccyl = cyl;
 
 	/* set up transfer */
 	fd_dma(func == F_READ, bounce, FDBLK);
-	sec = blknum %  disklabel.d_secpercyl;
+	sec = blknum %  (sectrac * 2) /*disklabel.d_secpercyl*/;
 	head = sec / sectrac;
 	sec = sec % sectrac + 1;
 #ifdef FDDEBUG
@@ -182,7 +192,7 @@ retry:
 	out_fdc(head << 2 | fd_drive);	/* head & unit */
 	out_fdc(cyl);			/* track */
 	out_fdc(head);
-	out_fdc(sec);			/* sector XXX +1? */
+	out_fdc(sec);			/* sector */
 	out_fdc(ft->secsize);		/* sector size */
 	out_fdc(sectrac);		/* sectors/track */
 	out_fdc(ft->gap);		/* gap size */
@@ -195,15 +205,16 @@ retry:
 	}
 	if (fd_status[0]&0xF8) {
 		numretry--;
-#ifdef SMALL
-		printf("FD err %lx %lx %lx %lx %lx %lx %lx\n",
-		fd_status[0], fd_status[1], fd_status[2], fd_status[3],
-		fd_status[4], fd_status[5], fd_status[6] );
-#endif
+
+		if (!probetype)
+			printf("FD err %lx %lx %lx %lx %lx %lx %lx\n",
+			fd_status[0], fd_status[1], fd_status[2], fd_status[3],
+			fd_status[4], fd_status[5], fd_status[6] );
 		if (numretry) goto retry;
 		return -1;
 	}
-	if (func == F_READ) bcopy(bounce,address,FDBLK);
+	if (func == F_READ)
+		bcopy(bounce,address,FDBLK);
 	return 0;
 }
 
@@ -286,14 +297,15 @@ fdopen(io)
 {
 	int unit, type, i;
 	struct fd_type *ft;
+	char buf[512];
 
 	unit = io->i_unit;
-	type = io->i_part;
+	/* type = io->i_part; */
 	io->i_boff = 0;		/* no disklabels -- tar/dump wont work */
 #ifdef FDDEBUG
 	printf("fdopen %d %d ", unit, type);
 #endif
- 	ft = &fd_types[type];
+ 	ft = &fd_types[0];
 	fd_drive = unit;
 
 	set_intr(); /* init intr cont */
@@ -317,7 +329,19 @@ fdopen(io)
 	out_fdc(unit);
 
 	waitio();
-	return(0);
+	probetype = 1;
+	for (fd_type = 0; fd_type < sizeof(fd_types)/sizeof(fd_types[0]);
+		fd_type++, ft++) {
+		/*for(i=0; i < 100000; i++);
+		outb(0x3f7,ft->trans);
+		for(i=0; i < 100000; i++);*/
+		if (fdio(F_READ, unit, ft->sectrac-1, buf) >= 0){
+			probetype = 0;
+			return(0);
+		}
+	}
+	printf("failed fdopen");
+	return(-1);
 }
 
 

@@ -73,11 +73,12 @@ struct statfs {
  * File system types.
  */
 #define	MOUNT_NONE	0
-#define	MOUNT_UFS	1
-#define	MOUNT_NFS	2
-#define	MOUNT_MFS	3
-#define	MOUNT_PC	4
-#define	MOUNT_MAXTYPE	4
+#define	MOUNT_UFS	1		/* UNIX "Fast" Filesystem */
+#define	MOUNT_NFS	2		/* Network Filesystem */
+#define	MOUNT_MFS	3		/* Memory Filesystem */
+#define	MOUNT_MSDOS	4		/* MSDOS Filesystem */
+#define MOUNT_ISOFS	5		/* iso9660 cdrom */
+#define	MOUNT_MAXTYPE	5
 
 /*
  * Structure per mounted file system.

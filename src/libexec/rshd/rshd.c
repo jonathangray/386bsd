@@ -43,7 +43,7 @@ static char sccsid[] = "@(#)rshd.c	5.38 (Berkeley) 3/2/91";
 
 /*
  * From:
- *	$Source: /mit/kerberos/ucb/mit/rshd/RCS/rshd.c,v $
+ *	$Source: /usr/src/libexec/rshd/RCS/rshd.c,v $
  *	$Header: /mit/kerberos/ucb/mit/rshd/RCS/rshd.c,v 
  *		5.2 89/07/31 19:30:04 kfall Exp $
  */
@@ -69,6 +69,8 @@ static char sccsid[] = "@(#)rshd.c	5.38 (Berkeley) 3/2/91";
 
 #include <pwd.h>
 #include <syslog.h>
+#include <arpa/nameser.h>
+#include <resolv.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
@@ -337,6 +339,9 @@ doit(fromp)
 			strncpy(remotehost, hp->h_name, sizeof(remotehost) - 1);
 			remotehost[sizeof(remotehost) - 1] = 0;
 			errorhost = remotehost;
+#ifdef	RES_DNSRCH
+			_res.options &= ~RES_DNSRCH;
+#endif
 			hp = gethostbyname(remotehost);
 			if (hp == NULL) {
 				syslog(LOG_INFO,

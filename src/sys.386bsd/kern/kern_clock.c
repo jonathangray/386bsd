@@ -276,7 +276,7 @@ gatherstats(framep)
 		if (curproc == NULL && CLKF_BASEPRI(framep))
 			cpstate = CP_IDLE;
 #ifdef GPROF
-		s = CLKF_PC(framep) - s_lowpc;
+		s = (u_long) CLKF_PC(framep) - (u_long) s_lowpc;
 		if (profiling < 2 && s < s_textsize)
 			kcount[s / (HISTFRACTION * sizeof (*kcount))]++;
 #endif
@@ -319,6 +319,12 @@ softclock(frame)
 		splx(s);
 		(*func)(arg, a);
 	}
+
+	/*
+	 * If no process to work with, we're finished.
+	 */
+	if (curproc == 0) return;
+
 	/*
 	 * If trapped user-mode and profiling, give it
 	 * a profiling tick.

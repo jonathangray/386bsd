@@ -1,6 +1,6 @@
 #	@(#)Makefile	5.6.1.2 (Berkeley) 5/8/91
 
-SUBDIR=	chown chroot config dev_mkdb diskpart \
+SUBDIR=	arp chown chroot config dbsym dev_mkdb diskpart \
 	inetd kvm_mkdb lpr \
 	portmap mtree named pwd_mkdb rmt \
 	sendmail sliplogin syslogd timed traceroute update vipw

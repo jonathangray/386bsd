@@ -55,7 +55,7 @@ static char sccsid[] = "@(#)tip.c	5.15 (Berkeley) 2/4/91";
  */
 int bauds[] = {
 	0, 50, 75, 110, 134, 150, 200, 300, 600,
-	1200, 1800, 2400, 4800, 9600, 19200, -1
+	1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, -1
 };
 
 int	disc = OTTYDISC;		/* tip normally runs this way */
@@ -553,12 +553,22 @@ pwrite(fd, buf, n)
 	extern int errno;
 
 	bp = buf;
-	if (bits8 == 0)
-		for (i = 0; i < n; i++) {
-			*bp = partab[(*bp) & 0177];
-			bp++;
+	if (bits8 == 0) {
+		static char *mbp; static sz;
+
+		if (mbp == 0 || n > sz) {
+			if (mbp)
+				free(mbp);
+			mbp = (char *) malloc(n);
+			sz = n;
 		}
-	if (write(fd, buf, n) < 0) {
+		
+		bp = mbp;
+		for (i = 0; i < n; i++)
+			*bp++ = partab[*buf++ & 0177];
+		bp = mbp;
+	}
+	if (write(fd, bp, n) < 0) {
 		if (errno == EIO)
 			tipabort("Lost carrier.");
 		/* this is questionable */

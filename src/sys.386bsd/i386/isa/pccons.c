@@ -54,6 +54,10 @@ static char rcsid[] = "$Header: /usr/bill/working/sys/i386/isa/RCS/pccons.c,v 1.
 #include "syslog.h"
 #include "i386/isa/icu.h"
 #include "i386/i386/cons.h"
+#include "i386/isa/isa.h"
+#include "i386/isa/ic/i8042.h"
+#include "i386/isa/kbd.h"
+#include "machine/pc/display.h"
 
 struct	tty pccons;
 
@@ -66,11 +70,38 @@ struct	pcconsoftc {
 	u_long	cs_wedgecnt;	/* times restarted */
 } pcconsoftc;
 
+struct	kbdsoftc {
+	char	kbd_flags;
+#define	KBDF_ACTIVE	0x1	/* timeout active */
+#define	KBDF_POLLING	0x2	/* polling for input */
+#define	KBDF_RAW	0x4	/* pass thru scan codes for input */
+	char	kbd_lastc;	/* last char sent */
+} kbdsoftc;
+
+static struct video_state {
+	char	esc;	/* seen escape */
+	char	ebrac;	/* seen escape bracket */
+	char	eparm;	/* seen escape and parameters */
+	char	so;	/* in standout mode? */
+	int 	cx;	/* "x" parameter */
+	int 	cy;	/* "y" parameter */
+	int 	row, col;	/* current cursor position */
+	int 	nrow, ncol;	/* current screen geometry */
+	char	fg_at, bg_at;	/* normal attributes */
+	char	so_at;	/* standout attribute */
+	char	kern_fg_at, kern_bg_at;
+	char	color;	/* color or mono display */
+} vs;
+
 int pcprobe(), pcattach();
 
 struct	isa_driver pcdriver = {
 	pcprobe, pcattach, "pc",
 };
+
+/* block cursor so wfj does not go blind on laptop hunting for
+	the verdamnt cursor -wfj */
+#define	FAT_CURSOR
 
 #define	COL		80
 #define	ROW		25
@@ -81,10 +112,13 @@ struct	isa_driver pcdriver = {
 #define CGA_BUF		0xfe0B8000
 #define IOPHYSMEM	0xA0000
 
-u_char	color = 0xe ;
 static unsigned int addr_6845 = MONO_BASE;
 u_short *Crtat = (u_short *)MONO_BUF;
 static openf;
+
+char *sgetc(int);
+static	char	*more_chars;
+static	int	char_count;
 
 /*
  * We check the console periodically to make sure
@@ -100,7 +134,7 @@ int	pcparam();
 int	ttrstrt();
 char	partab[];
 
-extern pcopen __P((dev_t, int, int, struct proc *));
+extern pcopen(dev_t, int, int, struct proc *);
 /*
  * Wait for CP to accept last CP command sent
  * before setting up next command.
@@ -114,8 +148,20 @@ extern pcopen __P((dev_t, int, int, struct proc *));
 	} \
 }
 
-u_char inb();
+/*
+ * Pass command to keyboard itself
+ */
+unsigned kbd_cmd(val) {
+	
+	while (inb(KBSTATP)&KBS_IBF);
+	if (val) outb(KBOUTP, val);
+	while (inb(KBSTATP)&KBS_IBF);
+	return (inb(KBDATAP));
+}
 
+/*
+ * these are both bad jokes
+ */
 pcprobe(dev)
 struct isa_device *dev;
 {
@@ -123,22 +169,21 @@ struct isa_device *dev;
 	int again = 0;
 
 	/* Enable interrupts and keyboard controller */
-	while (inb(0x64)&2); outb(0x64,0x60);
-	while (inb(0x64)&2); outb(0x60,0x4D);
+	kbc_8042cmd(K_LDCMDBYTE);
+	outb(KBOUTP, CMDBYTE);
 
 	/* Start keyboard stuff RESET */
-	while (inb(0x64)&2);	/* wait input ready */
-	outb(0x60,0xFF);	/* RESET */
-	while((c=inb(0x60))!=0xFA) {
-		if ((c == 0xFE) ||  (c == 0xFF)) {
+	kbd_cmd(KBC_RESET);
+	while((c = inb(KBDATAP)) != KBR_ACK) {
+		if ((c == KBR_RESEND) ||  (c == KBR_OVERRUN)) {
 			if(!again)printf("KEYBOARD disconnected: RECONNECT \n");
-			while (inb(0x64)&2);	/* wait input ready */
-			outb(0x60,0xFF);	/* RESET */
+			kbd_cmd(KBC_RESET);
 			again = 1;
 		}
 	}
+
 	/* pick up keyboard reset return code */
-	while((c=inb(0x60))!=0xAA);
+	while((c = inb(KBDATAP)) != KBR_RSTDONE);
 	return 1;
 }
 
@@ -148,18 +193,10 @@ struct isa_device *dev;
 	u_short *cp = Crtat + (CGA_BUF-MONO_BUF)/CHR;
 	u_short was;
 
-	/* Crtat initialized to point to MONO buffer   */
-	/* if not present change to CGA_BUF offset     */
-	/* ONLY ADD the difference since locore.s adds */
-	/* in the remapped offset at the right time    */
-
-	was = *Crtat;
-	*Crtat = (u_short) 0xA55A;
-	if (*Crtat != 0xA55A)
+	if (vs.color == 0)
 		printf("<mono>");
 	else	printf("<color>");
-	*Crtat = was;
-	cursor();
+	cursor(0);
 }
 
 /* ARGSUSED */
@@ -230,16 +267,21 @@ pcrint(dev, irq, cpl)
 	dev_t dev;
 {
 	int c;
+	char *cp;
 
-	c = sgetc(1);
-	if (c&0x100) return;
-	if (pcconsoftc.cs_flags&CSF_POLLING)
+	cp = sgetc(1);
+	if (cp == 0)
+		return;
+	if (pcconsoftc.cs_flags & CSF_POLLING)
 		return;
 #ifdef KDB
 	if (kdbrintr(c, &pccons))
 		return;
 #endif
-	(*linesw[pccons.t_line].l_rint)(c&0xff, &pccons);
+	if (!openf)
+		return;
+	while (*cp)
+		(*linesw[pccons.t_line].l_rint)(*cp++ & 0xff, &pccons);
 }
 
 pcioctl(dev, cmd, data, flag)
@@ -282,7 +324,7 @@ pcxint(dev)
 pcstart(tp)
 	register struct tty *tp;
 {
-	register c, s;
+	int c, s;
 
 	s = spltty();
 	if (tp->t_state & (TS_TIMEOUT|TS_BUSY|TS_TTSTOP))
@@ -302,9 +344,10 @@ pcstart(tp)
 	if (RB_LEN(&tp->t_out) == 0)
 		goto out;
 	c = getc(&tp->t_out);
+	/*tp->t_state |= TS_BUSY;*/
 	splx(s);
-	sput(c,0x7);
-	s = spltty();
+	sput(c, 0);
+	(void)spltty();
 	} while(1);
 out:
 	splx(s);
@@ -343,15 +386,9 @@ pccnputc(dev, c)
 	dev_t dev;
 	char c;
 {
-	int clr = __color;
-
-	if (clr == 0)
-		clr = 0x30;
-	else
-		clr |= 0x60;
 	if (c == '\n')
-		sput('\r', clr);
-	sput(c, clr);
+		sput('\r', 1);
+	sput(c, 1);
 }
 
 /*
@@ -361,8 +398,8 @@ pcputchar(c, tp)
 	char c;
 	register struct tty *tp;
 {
-	sput(c,0x2);
-	if (c=='\n') getchar();
+	sput(c, 1);
+	/*if (c=='\n') getchar();*/
 }
 
 
@@ -370,22 +407,23 @@ pcputchar(c, tp)
 pccngetc(dev)
 	dev_t dev;
 {
-	register int c, s;
+	register int s;
+	register char *cp;
 
 	s = spltty();		/* block pcrint while we poll */
-	c = sgetc(0);
-	if (c == '\r') c = '\n';
+	cp = sgetc(0);
 	splx(s);
-	return (c);
+	if (*cp == '\r') return('\n');
+	return (*cp);
 }
 
 pcgetchar(tp)
 	register struct tty *tp;
 {
-	int c;
+	char *cp;
 
-	c = sgetc(0);
-	return (c&0xff);
+	cp = sgetc(0);
+	return (*cp&0xff);
 }
 
 /*
@@ -414,80 +452,82 @@ pcpoll(onoff)
 }
 #endif
 
-extern int hz;
-
-static beeping;
-sysbeepstop()
-{
-	/* disable counter 2 */
-	outb(0x61,inb(0x61)&0xFC);
-	beeping = 0;
-}
-
-sysbeep()
-{
-
-	/* enable counter 2 */
-	outb(0x61,inb(0x61)|3);
-	/* set command for counter 2, 2 byte write */
-	outb(0x43,0xB6);
-	/* send 0x637 for 750 HZ */
-	outb(0x42,0x37);
-	outb(0x42,0x06);
-	if(!beeping)timeout(sysbeepstop,0,hz/4);
-	beeping = 1;
-}
-
-/* cursor() sets an offset (0-1999) into the 80x25 text area    */
+/*
+ * cursor():
+ *   reassigns cursor position, updated by the rescheduling clock
+ *   which is a index (0-1999) into the text area. Note that the
+ *   cursor is a "foreground" character, it's color determined by
+ *   the fg_at attribute. Thus if fg_at is left as 0, (FG_BLACK),
+ *   as when a portion of screen memory is 0, the cursor may dissappear.
+ */
 
 static u_short *crtat = 0;
-char bg_at = 0x0f;
-char so_at = 0x70;
 
-cursor()
+cursor(int a)
 { 	int pos = crtat - Crtat;
 
-	outb(addr_6845,14);
-	outb(addr_6845+1,pos >> 8);
-	outb(addr_6845,15);
-	outb(addr_6845+1,pos&0xff);
-	timeout(cursor,0,hz/10);
+	outb(addr_6845, 14);
+	outb(addr_6845+1, pos>> 8);
+	outb(addr_6845, 15);
+	outb(addr_6845+1, pos);
+#ifdef	FAT_CURSOR
+	outb(addr_6845, 10);
+	outb(addr_6845+1, 0);
+	outb(addr_6845, 11);
+	outb(addr_6845+1, 18);
+#endif	FAT_CURSOR
+	if (a == 0)
+		timeout(cursor, 0, hz/10);
 }
 
-u_char shfts, ctls, alts, caps, num, stp, scroll;
+static u_char shift_down, ctrl_down, alt_down, caps, num, scroll;
+
+#define	wrtchar(c, at) \
+	{ char *cp = (char *)crtat; *cp++ = (c); *cp = (at); crtat++; vs.col++; }
+
+
+/* translate ANSI color codes to standard pc ones */
+static char fgansitopc[] =
+{	FG_BLACK, FG_RED, FG_GREEN, FG_BROWN, FG_BLUE,
+	FG_MAGENTA, FG_CYAN, FG_LIGHTGREY};
+
+static char bgansitopc[] =
+{	BG_BLACK, BG_RED, BG_GREEN, BG_BROWN, BG_BLUE,
+	BG_MAGENTA, BG_CYAN, BG_LIGHTGREY};
 
 /*
- * Compensate for abysmally stupid frame buffer aribitration with macro
+ *   sput has support for emulation of the 'pc3' termcap entry.
+ *   if ka, use kernel attributes.
  */
-#define	wrtchar(c) { do *crtat = (c); while ((c) != *crtat); crtat++; row++; }
-
-/* sput has support for emulation of the 'ibmpc' termcap entry. */
-/* This is a bare-bones implementation of a bare-bones entry    */
-/* One modification: Change li#24 to li#25 to reflect 25 lines  */
-
-sput(c, ca)
-u_char c, ca;
+sput(c,  ka)
+u_char c;
+u_char ka;
 {
 
-	static int esc,ebrac,eparm,cx,cy,row,so;
+	int sc = 1;	/* do scroll check */
+	char fg_at, bg_at, at;
 
-	if (crtat == 0) {
+	if (crtat == 0)
+	{
 		u_short *cp = Crtat + (CGA_BUF-MONO_BUF)/CHR, was;
 		unsigned cursorat;
 
-		/* Crtat initialized to point to MONO buffer   */
-		/* if not present change to CGA_BUF offset     */
-		/* ONLY ADD the difference since locore.s adds */
-		/* in the remapped offset at the right time    */
+		/*
+		 *   Crtat  initialized  to  point  to  MONO  buffer  if not present
+		 *   change   to  CGA_BUF  offset  ONLY  ADD  the  difference  since
+		 *   locore.s adds in the remapped offset at the right time
+		 */
 
 		was = *cp;
 		*cp = (u_short) 0xA55A;
 		if (*cp != 0xA55A) {
 			addr_6845 = MONO_BASE;
+			vs.color=0;
 		} else {
 			*cp = was;
 			addr_6845 = CGA_BASE;
 			Crtat = Crtat + (CGA_BUF-MONO_BUF)/CHR;
+			vs.color=1;
 		}
 		/* Extract cursor location */
 		outb(addr_6845,14);
@@ -496,290 +536,841 @@ u_char c, ca;
 		cursorat |= inb(addr_6845+1);
 
 		crtat = Crtat + cursorat;
-		fillw((bg_at<<8)|' ', crtat, COL*ROW-cursorat);
+		vs.ncol = COL;
+		vs.nrow = ROW;
+		vs.fg_at = FG_LIGHTGREY;
+		vs.bg_at = BG_BLACK;
+
+		if (vs.color == 0) {
+			vs.kern_fg_at = FG_INTENSE;
+			vs.so_at = FG_BLACK | BG_LIGHTGREY;
+		} else {
+			vs.kern_fg_at = FG_LIGHTGREY;
+			vs.so_at = FG_YELLOW | BG_BLACK;
+		}
+		vs.kern_bg_at = BG_BLACK;
+
+		fillw(((vs.bg_at|vs.fg_at)<<8)|' ', crtat, COL*ROW-cursorat);
 	}
+
+	/* which attributes do we use? */
+	if (ka) {
+		fg_at = vs.kern_fg_at;
+		bg_at = vs.kern_bg_at;
+	} else {
+		fg_at = vs.fg_at;
+		bg_at = vs.bg_at;
+	}
+	at = fg_at|bg_at;
+
 	switch(c) {
+		int inccol;
+
 	case 0x1B:
-		esc = 1; ebrac = 0; eparm = 0;
+		if(vs.esc)
+			wrtchar(c, vs.so_at); 
+		vs.esc = 1; vs.ebrac = 0; vs.eparm = 0;
 		break;
 
 	case '\t':
-		do {
-			wrtchar((ca<<8)| ' ');
-		} while (row % 8);
+		inccol = (8 - vs.col % 8);	/* non-destructive tab */
+		crtat += inccol;
+		vs.col += inccol;
 		break;
 
 	case '\010':
-		crtat--; row--;
-		if (row < 0) row += COL;  /* non-destructive backspace */
+		crtat--; vs.col--;
+		if (vs.col < 0) vs.col += vs.ncol;  /* non-destructive backspace */
 		break;
 
 	case '\r':
-		crtat -= row ; row = 0;
+		crtat -=  (crtat - Crtat) % vs.ncol; vs.col = 0;
 		break;
 
 	case '\n':
-		crtat += COL ;
+		crtat += vs.ncol ;
 		break;
 
 	default:
-		if (esc) {
-			if (ebrac) {
+	bypass:
+		if (vs.esc) {
+			if (vs.ebrac) {
 				switch(c) {
-				case 'm': /* no support for standout */
-					if (!cx) so = 0;
-					else so = 1;
-					esc = 0; ebrac = 0; eparm = 0;
+					int pos;
+				case 'm':
+					if (!vs.cx) vs.so = 0;
+					else vs.so = 1;
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
 					break;
-				case 'A': /* back one row */
-					crtat -= COL;
-					esc = 0; ebrac = 0; eparm = 0;
+				case 'A': /* back cx rows */
+					if (vs.cx <= 0) vs.cx = 1;
+					pos = crtat - Crtat;
+					pos -= vs.ncol * vs.cx;
+					if (pos < 0)
+						pos += vs.nrow * vs.ncol;
+					crtat = Crtat + pos;
+					sc = vs.esc = vs.ebrac = vs.eparm = 0;
 					break;
-				case 'B': /* down one row */
-					crtat += COL;
-					esc = 0; ebrac = 0; eparm = 0;
+				case 'B': /* down cx rows */
+					if (vs.cx <= 0) vs.cx = 1;
+					pos = crtat - Crtat;
+					pos += vs.ncol * vs.cx;
+					if (pos >= vs.nrow * vs.ncol) 
+						pos -= vs.nrow * vs.ncol;
+					crtat = Crtat + pos;
+					sc = vs.esc = vs.ebrac = vs.eparm = 0;
 					break;
 				case 'C': /* right cursor */
-					crtat++; row++;
-					esc = 0; ebrac = 0; eparm = 0;
-					break;
-				case 'J': /* Clear to end of display */
-					fillw((bg_at<<8)+' ', crtat,
-						Crtat+COL*ROW-crtat);
-					esc = 0; ebrac = 0; eparm = 0;
-					break;
-				case 'K': /* Clear to EOL */
-					fillw((bg_at<<8)+' ', crtat,
-						COL-(crtat-Crtat)%COL);
-					esc = 0; ebrac = 0; eparm = 0;
-					break;
-				case 'H': /* Cursor move */
-					if ((!cx)||(!cy)) {
-						crtat = Crtat;
-						row = 0;
-					} else {
-						crtat = Crtat+(cx-1)*COL+cy-1;
-						row = cy-1;
+					if (vs.cx <= 0)
+						vs.cx = 1;
+					pos = crtat - Crtat;
+					pos += vs.cx; vs.col += vs.cx;
+					if (vs.col >= vs.ncol) {
+						vs.col -= vs.ncol;
+						pos -= vs.ncol;     /* cursor stays on same line */
 					}
-					esc = 0; ebrac = 0; eparm = 0;
+					crtat = Crtat + pos;
+					sc = vs.esc = vs.ebrac = vs.eparm = 0;
+					break;
+				case 'D': /* left cursor */
+					if (vs.cx <= 0)
+						vs.cx = 1;
+					pos = crtat - Crtat;
+					pos -= vs.cx; vs.col -= vs.cx;
+					if (vs.col < 0) {
+						vs.col += vs.ncol;
+						pos += vs.ncol;     /* cursor stays on same line */
+					}
+					crtat = Crtat + pos;
+					sc = vs.esc = vs.ebrac = vs.eparm = 0;
+					break;
+				case 'J': /* Clear ... */
+					if (vs.cx == 0)
+						/* ... to end of display */
+						fillw((at << 8) + ' ',
+							crtat,
+							Crtat + vs.ncol * vs.nrow - crtat);
+					else if (vs.cx == 1)
+						/* ... to next location */
+						fillw((at << 8) + ' ',
+							Crtat,
+							crtat - Crtat + 1);
+					else if (vs.cx == 2)
+						/* ... whole display */
+						fillw((at << 8) + ' ',
+							Crtat,
+							vs.ncol * vs.nrow);
+						
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					break;
+				case 'K': /* Clear line ... */
+					if (vs.cx == 0)
+						/* ... current to EOL */
+						fillw((at << 8) + ' ',
+							crtat,
+							vs.ncol - (crtat - Crtat) % vs.ncol);
+					else if (vs.cx == 1)
+						/* ... beginning to next */
+						fillw((at << 8) + ' ',
+							crtat - (crtat - Crtat) % vs.ncol,
+							((crtat - Crtat) % vs.ncol) + 1);
+					else if (vs.cx == 2)
+						/* ... entire line */
+						fillw((at << 8) + ' ',
+							crtat - (crtat - Crtat) % vs.ncol,
+							vs.ncol);
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					break;
+				case 'f': /* in system V consoles */
+				case 'H': /* Cursor move */
+					if ((!vs.cx)||(!vs.cy)) {
+						crtat = Crtat;
+						vs.col = 0;
+					} else {
+						crtat = Crtat + (vs.cx - 1) * vs.ncol + vs.cy - 1;
+						vs.col = vs.cy - 1;
+					}
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					break;
+				case 'S':  /* scroll up cx lines */
+					if (vs.cx <= 0) vs.cx = 1;
+					bcopy(Crtat+vs.ncol*vs.cx, Crtat, vs.ncol*(vs.nrow-vs.cx)*CHR);
+					fillw((at <<8)+' ', Crtat+vs.ncol*(vs.nrow-vs.cx), vs.ncol*vs.cx);
+					/* crtat -= vs.ncol*vs.cx; /* XXX */
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					break;
+				case 'T':  /* scroll down cx lines */
+					if (vs.cx <= 0) vs.cx = 1;
+					bcopy(Crtat, Crtat+vs.ncol*vs.cx, vs.ncol*(vs.nrow-vs.cx)*CHR);
+					fillw((at <<8)+' ', Crtat, vs.ncol*vs.cx);
+					/* crtat += vs.ncol*vs.cx; /* XXX */
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
 					break;
 				case ';': /* Switch params in cursor def */
-					eparm = 1;
-					return;
+					vs.eparm = 1;
+					break;
+				case 'r':
+					vs.so_at = (vs.cx & 0x0f) | ((vs.cy & 0x0f) << 4);
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					break;
+				case 'x': /* set attributes */
+					switch (vs.cx) {
+					case 0:
+						/* reset to normal attributes */
+						bg_at = BG_BLACK;
+						if (ka)
+							fg_at = vs.color? FG_LIGHTGREY: FG_UNDERLINE;
+						else
+							fg_at = FG_LIGHTGREY;
+						break;
+					case 1:
+						/* ansi background */
+						if (vs.color)
+							bg_at = bgansitopc[vs.cy & 7];
+						break;
+					case 2:
+						/* ansi foreground */
+						if (vs.color)
+							fg_at = fgansitopc[vs.cy & 7];
+						break;
+					case 3:
+						/* pc text attribute */
+						if (vs.eparm) {
+							fg_at = vs.cy & 0x8f;
+							bg_at = vs.cy & 0x70;
+						}
+						break;
+					}
+					if (ka) {
+						vs.kern_fg_at = fg_at;
+						vs.kern_bg_at = bg_at;
+					} else {
+						vs.fg_at = fg_at;
+						vs.bg_at = bg_at;
+					}
+					vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					break;
+					
 				default: /* Only numbers valid here */
 					if ((c >= '0')&&(c <= '9')) {
-						if (eparm) {
-							cy *= 10;
-							cy += c - '0';
+						if (vs.eparm) {
+							vs.cy *= 10;
+							vs.cy += c - '0';
 						} else {
-							cx *= 10;
-							cx += c - '0';
+							vs.cx *= 10;
+							vs.cx += c - '0';
 						}
 					} else {
-						esc = 0; ebrac = 0; eparm = 0;
+						vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
 					}
-					return;
+					break;
 				}
 				break;
 			} else if (c == 'c') { /* Clear screen & home */
-				fillw((bg_at<<8)+' ', Crtat,COL*ROW);
-				crtat = Crtat; row = 0;
-				esc = 0; ebrac = 0; eparm = 0;
+				fillw((at << 8) + ' ', Crtat, vs.ncol*vs.nrow);
+				crtat = Crtat; vs.col = 0;
+				vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
 			} else if (c == '[') { /* Start ESC [ sequence */
-				ebrac = 1; cx = 0; cy = 0; eparm = 0;
+				vs.ebrac = 1; vs.cx = 0; vs.cy = 0; vs.eparm = 0;
 			} else { /* Invalid, clear state */
-				 esc = 0; ebrac = 0; eparm = 0;
+				 vs.esc = 0; vs.ebrac = 0; vs.eparm = 0;
+					wrtchar(c, vs.so_at); 
 			}
 		} else {
 			if (c == 7)
-				sysbeep();
-			/* Print only printables */
-			else /*if (c >= ' ') */ {
-				if (so) {
-					wrtchar((so_at<<8)| c); 
-				} else {
-					wrtchar((ca<<8)| c); 
-				}
-				if (row >= COL) row = 0;
+				sysbeep(0x31b, hz/4);
+			else {
+				if (vs.so) {
+					wrtchar(c, vs.so_at);
+				} else
+					wrtchar(c, at); 
+				if (vs.col >= vs.ncol) vs.col = 0;
 				break ;
 			}
 		}
 	}
-	if (crtat >= Crtat+COL*(ROW)) { /* scroll check */
-		if (openf) do sgetc(1); while (scroll);
-		bcopy(Crtat+COL,Crtat,COL*(ROW-1)*CHR);
-		fillw ((bg_at<<8) + ' ', Crtat+COL*(ROW-1),COL) ;
-		crtat -= COL ;
+	if (sc && crtat >= Crtat+vs.ncol*vs.nrow) { /* scroll check */
+		if (openf) do (void)sgetc(1); while (scroll);
+		bcopyb(Crtat+vs.ncol, Crtat, vs.ncol*(vs.nrow-1)*CHR);
+		fillw ((at << 8) + ' ', Crtat + vs.ncol*(vs.nrow-1),
+			vs.ncol);
+		crtat -= vs.ncol;
 	}
+	if (ka)
+		cursor(1);
 }
 
-#define	L		0x0001	/* locking function */
-#define	SHF		0x0002	/* keyboard shift */
+
+unsigned	__debug = 0; /*0xffe */;
+static char scantokey[] {
+0,
+120,	/* F9 */
+0,
+116,	/* F5 */
+114,	/* F3 */
+112,	/* F1 */
+113,	/* F2 */
+123,	/* F12 */
+0,
+121,	/* F10 */
+119,	/* F8 */
+117,	/* F6 */
+115,	/* F4 */
+16,	/* TAB */
+1,	/* ` */
+0,
+0,
+60,	/* ALT (left) */
+44,	/* SHIFT (left) */
+0,
+58,	/* CTRL (left) */
+17,	/* Q */
+2,	/* 1 */
+0,
+0,
+0,
+46,	/* Z */
+32,	/* S */
+31,	/* A */
+18,	/* W */
+3,	/* 2 */
+0,
+0,
+48,	/* C */
+47,	/* X */
+33,	/* D */
+19,	/* E */
+5,	/* 4 */
+4,	/* 3 */
+0,
+0,
+61,	/* SPACE */
+49,	/* V */
+34,	/* F */
+21,	/* T */
+20,	/* R */
+6,	/* 5 */
+0,
+0,
+51,	/* N */
+50,	/* B */
+36,	/* H */
+35,	/* G */
+22,	/* Y */
+7,	/* 6 */
+0,
+0,
+0,
+52,	/* M */
+37,	/* J */
+23,	/* U */
+8,	/* 7 */
+9,	/* 8 */
+0,
+0,
+53,	/* , */
+38,	/* K */
+24,	/* I */
+25,	/* O */
+11,	/* 0 */
+10,	/* 9 */
+0,
+0,
+54,	/* . */
+55,	/* / */
+39,	/* L */
+40,	/* ; */
+26,	/* P */
+12,	/* - */
+0,
+0,
+0,
+41,	/* " */
+0,
+27,	/* [ */
+13,	/* + */
+0,
+0,
+0,
+57,	/* SHIFT (right) */
+43,	/* ENTER */
+28,	/* ] */
+0,
+29,	/* \ */
+0,
+0,
+0,
+45,	?* na*/
+0,
+0,
+0,
+0,
+15,	/* backspace */
+0,
+0,				/* keypad */
+93,	/* 1 */
+0,
+92,	/* 4 */
+91,	/* 7 */
+0,
+0,
+0,
+99,	/* 0 */
+104,	/* . */
+98,	/* 2 */
+97,	/* 5 */
+102,	/* 6 */
+96,	/* 8 */
+110,	/* ESC */
+90,	/* Num Lock */
+122,	/* F11 */
+106,	/* + */
+103,	/* 3 */
+105,	/* - */
+100,	/* * */
+101,	/* 9 */
+0,
+0,
+0,
+0,
+0,
+118,	/* F7 */
+};
+static char extscantokey[] {
+0,
+120,	/* F9 */
+0,
+116,	/* F5 */
+114,	/* F3 */
+112,	/* F1 */
+113,	/* F2 */
+123,	/* F12 */
+0,
+121,	/* F10 */
+119,	/* F8 */
+117,	/* F6 */
+115,	/* F4 */
+16,	/* TAB */
+1,	/* ` */
+0,
+0,
+ 62,	/* ALT (right) */
+ 124,	/* Print Screen */
+0,
+ 64,	/* CTRL (right) */
+17,	/* Q */
+2,	/* 1 */
+0,
+0,
+0,
+46,	/* Z */
+32,	/* S */
+31,	/* A */
+18,	/* W */
+3,	/* 2 */
+0,
+0,
+48,	/* C */
+47,	/* X */
+33,	/* D */
+19,	/* E */
+5,	/* 4 */
+4,	/* 3 */
+0,
+0,
+61,	/* SPACE */
+49,	/* V */
+34,	/* F */
+21,	/* T */
+20,	/* R */
+6,	/* 5 */
+0,
+0,
+51,	/* N */
+50,	/* B */
+36,	/* H */
+35,	/* G */
+22,	/* Y */
+7,	/* 6 */
+0,
+0,
+0,
+52,	/* M */
+37,	/* J */
+23,	/* U */
+8,	/* 7 */
+9,	/* 8 */
+0,
+0,
+53,	/* , */
+38,	/* K */
+24,	/* I */
+25,	/* O */
+11,	/* 0 */
+10,	/* 9 */
+0,
+0,
+54,	/* . */
+ 95,	/* / */
+39,	/* L */
+40,	/* ; */
+26,	/* P */
+12,	/* - */
+0,
+0,
+0,
+41,	/* " */
+0,
+27,	/* [ */
+13,	/* + */
+0,
+0,
+0,
+57,	/* SHIFT (right) */
+ 108,	/* ENTER */
+28,	/* ] */
+0,
+29,	/* \ */
+0,
+0,
+0,
+45,	?* na*/
+0,
+0,
+0,
+0,
+15,	/* backspace */
+0,
+0,				/* keypad */
+ 81,	/* end */
+0,
+ 79,	/* left arrow */
+ 80,	/* home */
+0,
+0,
+0,
+ 75,	/* ins */
+ 76,	/* del */
+ 84,	/* down arrow */
+97,	/* 5 */
+ 89,	/* right arrow */
+ 83,	/* up arrow */
+110,	/* ESC */
+90,	/* Num Lock */
+122,	/* F11 */
+106,	/* + */
+ 86,	/* page down */
+105,	/* - */
+ 124,	/* print screen */
+ 85,	/* page up */
+0,
+0,
+0,
+0,
+0,
+118,	/* F7 */
+};
+#define	CODE_SIZE	4		/* Use a max of 4 for now... */
+typedef struct
+{
+	u_short	type;
+	char	unshift[CODE_SIZE];
+	char	shift[CODE_SIZE];
+	char	ctrl[CODE_SIZE];
+} Scan_def;
+
+#define	SHIFT		0x0002	/* keyboard shift */
 #define	ALT		0x0004	/* alternate shift -- alternate chars */
 #define	NUM		0x0008	/* numeric shift  cursors vs. numeric */
 #define	CTL		0x0010	/* control shift  -- allows ctl function */
-#define	CPS		0x0020	/* caps shift -- swaps case of letter */
+#define	CAPS		0x0020	/* caps shift -- swaps case of letter */
 #define	ASCII		0x0040	/* ascii code for this key */
-#define	STP		0x0080	/* stop output */
+#define	SCROLL		0x0080	/* stop output */
 #define	FUNC		0x0100	/* function key */
-#define	SCROLL		0x0200	/* scroll lock key */
+#define	KP		0x0200	/* Keypad keys */
+#define	NONE		0x0400	/* no function */
 
-unsigned	__debug = 0; /*0xffe */;
-u_short action[] = {
-0,     ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII,		/* scan  0- 7 */
-ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII,		/* scan  8-15 */
-ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII,		/* scan 16-23 */
-ASCII, ASCII, ASCII, ASCII, ASCII,   CTL, ASCII, ASCII,		/* scan 24-31 */
-ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII,		/* scan 32-39 */
-ASCII, ASCII, SHF  , ASCII, ASCII, ASCII, ASCII, ASCII,		/* scan 40-47 */
-ASCII, ASCII, ASCII, ASCII, ASCII, ASCII,  SHF,  ASCII,		/* scan 48-55 */
-  ALT, ASCII, CPS  , FUNC , FUNC , FUNC , FUNC , FUNC ,		/* scan 56-63 */
-FUNC , FUNC , FUNC , FUNC , FUNC , NUM, SCROLL, ASCII,		/* scan 64-71 */
-ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII, ASCII,		/* scan 72-79 */
-ASCII, ASCII, ASCII, ASCII,     0,     0,     0,     0,		/* scan 80-87 */
-0,0,0,0,0,0,0,0,
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,	} ;
-
-u_char unshift[] = {	/* no shift */
-0,     033  , '1'  , '2'  , '3'  , '4'  , '5'  , '6'  ,		/* scan  0- 7 */
-'7'  , '8'  , '9'  , '0'  , '-'  , '='  , 0177 ,'\t'  ,		/* scan  8-15 */
-
-'q'  , 'w'  , 'e'  , 'r'  , 't'  , 'y'  , 'u'  , 'i'  ,		/* scan 16-23 */
-'o'  , 'p'  , '['  , ']'  , '\r' , CTL  , 'a'  , 's'  ,		/* scan 24-31 */
-
-'d'  , 'f'  , 'g'  , 'h'  , 'j'  , 'k'  , 'l'  , ';'  ,		/* scan 32-39 */
-'\'' , '`'  , SHF  , '\\' , 'z'  , 'x'  , 'c'  , 'v'  ,		/* scan 40-47 */
-
-'b'  , 'n'  , 'm'  , ','  , '.'  , '/'  , SHF  ,   '*',		/* scan 48-55 */
-ALT  , ' '  , CPS,     1,     2,    3 ,     4,     5,		/* scan 56-63 */
-
-    6,     7,     8,     9,    10, NUM, STP,   '7',		/* scan 64-71 */
-  '8',   '9',   '-',   '4',   '5',   '6',   '+',   '1',		/* scan 72-79 */
-
-  '2',   '3',   '0',   '.',     0,     0,     0,     0,		/* scan 80-87 */
-0,0,0,0,0,0,0,0,
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,	} ;
-
-u_char shift[] = {	/* shift shift */
-0,     033  , '!'  , '@'  , '#'  , '$'  , '%'  , '^'  ,		/* scan  0- 7 */
-'&'  , '*'  , '('  , ')'  , '_'  , '+'  , 0177 ,'\t'  ,		/* scan  8-15 */
-'Q'  , 'W'  , 'E'  , 'R'  , 'T'  , 'Y'  , 'U'  , 'I'  ,		/* scan 16-23 */
-'O'  , 'P'  , '{'  , '}'  , '\r' , CTL  , 'A'  , 'S'  ,		/* scan 24-31 */
-'D'  , 'F'  , 'G'  , 'H'  , 'J'  , 'K'  , 'L'  , ':'  ,		/* scan 32-39 */
-'"'  , '~'  , SHF  , '|'  , 'Z'  , 'X'  , 'C'  , 'V'  ,		/* scan 40-47 */
-'B'  , 'N'  , 'M'  , '<'  , '>'  , '?'  , SHF  ,   '*',		/* scan 48-55 */
-ALT  , ' '  , CPS,     0,     0, ' '  ,     0,     0,		/* scan 56-63 */
-    0,     0,     0,     0,     0, NUM, STP,   '7',		/* scan 64-71 */
-  '8',   '9',   '-',   '4',   '5',   '6',   '+',   '1',		/* scan 72-79 */
-  '2',   '3',   '0',   '.',     0,     0,     0,     0,		/* scan 80-87 */
-0,0,0,0,0,0,0,0,
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,	} ;
-
-u_char ctl[] = {	/* CTL shift */
-0,     033  , '!'  , 000  , '#'  , '$'  , '%'  , 036  ,		/* scan  0- 7 */
-'&'  , '*'  , '('  , ')'  , 037  , '+'  , 034  ,'\177',		/* scan  8-15 */
-021  , 027  , 005  , 022  , 024  , 031  , 025  , 011  ,		/* scan 16-23 */
-017  , 020  , 033  , 035  , '\r' , CTL  , 001  , 023  ,		/* scan 24-31 */
-004  , 006  , 007  , 010  , 012  , 013  , 014  , ';'  ,		/* scan 32-39 */
-'\'' , '`'  , SHF  , 034  , 032  , 030  , 003  , 026  ,		/* scan 40-47 */
-002  , 016  , 015  , '<'  , '>'  , '?'  , SHF  ,   '*',		/* scan 48-55 */
-ALT  , ' '  , CPS,     0,     0, ' '  ,     0,     0,		/* scan 56-63 */
-CPS,     0,     0,     0,     0,     0,     0,     0,		/* scan 64-71 */
-    0,     0,     0,     0,     0,     0,     0,     0,		/* scan 72-79 */
-    0,     0,     0,     0,     0,     0,     0,     0,		/* scan 80-87 */
-    0,     0,   033, '7'  , '4'  , '1'  ,     0, NUM,		/* scan 88-95 */
-'8'  , '5'  , '2'  ,     0, STP, '9'  , '6'  , '3'  ,		/*scan  96-103*/
-'.'  ,     0, '*'  , '-'  , '+'  ,     0,     0,     0,		/*scan 104-111*/
-0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,	} ;
-
-#ifdef notdef
-struct key {
-	u_short action;		/* how this key functions */
-	char	ascii[8];	/* ascii result character indexed by shifts */
+static Scan_def	scan_codes[] =
+{
+	NONE,	"",		"",		"",		/* 0 unused */
+	ASCII,	"\033",		"\033",		"\033",		/* 1 ESCape */
+	ASCII,	"1",		"!",		"!",		/* 2 1 */
+	ASCII,	"2",		"@",		"\000",		/* 3 2 */
+	ASCII,	"3",		"#",		"#",		/* 4 3 */
+	ASCII,	"4",		"$",		"$",		/* 5 4 */
+	ASCII,	"5",		"%",		"%",		/* 6 5 */
+	ASCII,	"6",		"^",		"\036",		/* 7 6 */
+	ASCII,	"7",		"&",		"&",		/* 8 7 */
+	ASCII,	"8",		"*",		"\010",		/* 9 8 */
+	ASCII,	"9",		"(",		"(",		/* 10 9 */
+	ASCII,	"0",		")",		")",		/* 11 0 */
+	ASCII,	"-",		"_",		"\037",		/* 12 - */
+	ASCII,	"=",		"+",		"+",		/* 13 = */
+	ASCII,	"\177",		"\177",		"\010",		/* 14 backspace */
+	ASCII,	"\t",		"\177\t",	"\t",		/* 15 tab */
+	ASCII,	"q",		"Q",		"\021",		/* 16 q */
+	ASCII,	"w",		"W",		"\027",		/* 17 w */
+	ASCII,	"e",		"E",		"\005",		/* 18 e */
+	ASCII,	"r",		"R",		"\022",		/* 19 r */
+	ASCII,	"t",		"T",		"\024",		/* 20 t */
+	ASCII,	"y",		"Y",		"\031",		/* 21 y */
+	ASCII,	"u",		"U",		"\025",		/* 22 u */
+	ASCII,	"i",		"I",		"\011",		/* 23 i */
+	ASCII,	"o",		"O",		"\017",		/* 24 o */
+	ASCII,	"p",		"P",		"\020",		/* 25 p */
+	ASCII,	"[",		"{",		"\033",		/* 26 [ */
+	ASCII,	"]",		"}",		"\035",		/* 27 ] */
+	ASCII,	"\r",		"\r",		"\n",		/* 28 return */
+	CTL,	"",		"",		"",		/* 29 control */
+	ASCII,	"a",		"A",		"\001",		/* 30 a */
+	ASCII,	"s",		"S",		"\023",		/* 31 s */
+	ASCII,	"d",		"D",		"\004",		/* 32 d */
+	ASCII,	"f",		"F",		"\006",		/* 33 f */
+	ASCII,	"g",		"G",		"\007",		/* 34 g */
+	ASCII,	"h",		"H",		"\010",		/* 35 h */
+	ASCII,	"j",		"J",		"\n",		/* 36 j */
+	ASCII,	"k",		"K",		"\013",		/* 37 k */
+	ASCII,	"l",		"L",		"\014",		/* 38 l */
+	ASCII,	";",		":",		";",		/* 39 ; */
+	ASCII,	"'",		"\"",		"'",		/* 40 ' */
+	ASCII,	"`",		"~",		"`",		/* 41 ` */
+	SHIFT,	"",		"",		"",		/* 42 shift */
+	ASCII,	"\\",		"|",		"\034",		/* 43 \ */
+	ASCII,	"z",		"Z",		"\032",		/* 44 z */
+	ASCII,	"x",		"X",		"\030",		/* 45 x */
+	ASCII,	"c",		"C",		"\003",		/* 46 c */
+	ASCII,	"v",		"V",		"\026",		/* 47 v */
+	ASCII,	"b",		"B",		"\002",		/* 48 b */
+	ASCII,	"n",		"N",		"\016",		/* 49 n */
+	ASCII,	"m",		"M",		"\r",		/* 50 m */
+	ASCII,	",",		"<",		"<",		/* 51 , */
+	ASCII,	".",		">",		">",		/* 52 . */
+	ASCII,	"/",		"?",		"\177",		/* 53 / */
+	SHIFT,	"",		"",		"",		/* 54 shift */
+	KP,	"*",		"*",		"*",		/* 55 kp * */
+	ALT,	"",		"",		"",		/* 56 alt */
+	ASCII,	" ",		" ",		" ",		/* 57 space */
+	CAPS,	"",		"",		"",		/* 58 caps */
+	FUNC,	"\033[M",	"\033[Y",	"\033[k",	/* 59 f1 */
+	FUNC,	"\033[N",	"\033[Z",	"\033[l",	/* 60 f2 */
+	FUNC,	"\033[O",	"\033[a",	"\033[m",	/* 61 f3 */
+	FUNC,	"\033[P",	"\033[b",	"\033[n",	/* 62 f4 */
+	FUNC,	"\033[Q",	"\033[c",	"\033[o",	/* 63 f5 */
+	FUNC,	"\033[R",	"\033[d",	"\033[p",	/* 64 f6 */
+	FUNC,	"\033[S",	"\033[e",	"\033[q",	/* 65 f7 */
+	FUNC,	"\033[T",	"\033[f",	"\033[r",	/* 66 f8 */
+	FUNC,	"\033[U",	"\033[g",	"\033[s",	/* 67 f9 */
+	FUNC,	"\033[V",	"\033[h",	"\033[t",	/* 68 f10 */
+	NUM,	"",		"",		"",		/* 69 num lock */
+	SCROLL,	"",		"",		"",		/* 70 scroll lock */
+	KP,	"7",		"\033[H",	"7",		/* 71 kp 7 */
+	KP,	"8",		"\033[A",	"8",		/* 72 kp 8 */
+	KP,	"9",		"\033[I",	"9",		/* 73 kp 9 */
+	KP,	"-",		"-",		"-",		/* 74 kp - */
+	KP,	"4",		"\033[D",	"4",		/* 75 kp 4 */
+	KP,	"5",		"\033[E",	"5",		/* 76 kp 5 */
+	KP,	"6",		"\033[C",	"6",		/* 77 kp 6 */
+	KP,	"+",		"+",		"+",		/* 78 kp + */
+	KP,	"1",		"\033[F",	"1",		/* 79 kp 1 */
+	KP,	"2",		"\033[B",	"2",		/* 80 kp 2 */
+	KP,	"3",		"\033[G",	"3",		/* 81 kp 3 */
+	KP,	"0",		"\033[L",	"0",		/* 82 kp 0 */
+	KP,	".",		"\177",		".",		/* 83 kp . */
+	NONE,	"",		"",		"",		/* 84 0 */
+	NONE,	"100",		"",		"",		/* 85 0 */
+	NONE,	"101",		"",		"",		/* 86 0 */
+	FUNC,	"\033[W",	"\033[i",	"\033[u",	/* 87 f11 */
+	FUNC,	"\033[X",	"\033[j",	"\033[v",	/* 88 f12 */
+	NONE,	"102",		"",		"",		/* 89 0 */
+	NONE,	"103",		"",		"",		/* 90 0 */
+	NONE,	"",		"",		"",		/* 91 0 */
+	NONE,	"",		"",		"",		/* 92 0 */
+	NONE,	"",		"",		"",		/* 93 0 */
+	NONE,	"",		"",		"",		/* 94 0 */
+	NONE,	"",		"",		"",		/* 95 0 */
+	NONE,	"",		"",		"",		/* 96 0 */
+	NONE,	"",		"",		"",		/* 97 0 */
+	NONE,	"",		"",		"",		/* 98 0 */
+	NONE,	"",		"",		"",		/* 99 0 */
+	NONE,	"",		"",		"",		/* 100 */
+	NONE,	"",		"",		"",		/* 101 */
+	NONE,	"",		"",		"",		/* 102 */
+	NONE,	"",		"",		"",		/* 103 */
+	NONE,	"",		"",		"",		/* 104 */
+	NONE,	"",		"",		"",		/* 105 */
+	NONE,	"",		"",		"",		/* 106 */
+	NONE,	"",		"",		"",		/* 107 */
+	NONE,	"",		"",		"",		/* 108 */
+	NONE,	"",		"",		"",		/* 109 */
+	NONE,	"",		"",		"",		/* 110 */
+	NONE,	"",		"",		"",		/* 111 */
+	NONE,	"",		"",		"",		/* 112 */
+	NONE,	"",		"",		"",		/* 113 */
+	NONE,	"",		"",		"",		/* 114 */
+	NONE,	"",		"",		"",		/* 115 */
+	NONE,	"",		"",		"",		/* 116 */
+	NONE,	"",		"",		"",		/* 117 */
+	NONE,	"",		"",		"",		/* 118 */
+	NONE,	"",		"",		"",		/* 119 */
+	NONE,	"",		"",		"",		/* 120 */
+	NONE,	"",		"",		"",		/* 121 */
+	NONE,	"",		"",		"",		/* 122 */
+	NONE,	"",		"",		"",		/* 123 */
+	NONE,	"",		"",		"",		/* 124 */
+	NONE,	"",		"",		"",		/* 125 */
+	NONE,	"",		"",		"",		/* 126 */
+	NONE,	"",		"",		"",		/* 127 */
 };
-#endif
 
 
-#define	KBSTAT		0x64	/* kbd status port */
-#define	KBS_INP_BUF_FUL	0x02	/* kbd char ready */
-#define	KBDATA		0x60	/* kbd data port */
-#define	KBSTATUSPORT	0x61	/* kbd status */
 
 update_led()
 {
-	while (inb(0x64)&2);	/* wait input ready */
-	outb(0x60,0xED);	/* LED Command */
-	while (inb(0x64)&2);	/* wait input ready */
-	outb(0x60,scroll | 2*num | 4*caps);
-}
-
-reset_cpu() {
-	while(1) {
-		while (inb(0x64)&2);	/* wait input ready */
-		outb(0x64,0xFE);	/* Reset Command */
-		DELAY(4000000);
-		while (inb(0x64)&2);	/* wait input ready */
-		outb(0x64,0xFF);	/* Keyboard Reset Command */
-	}
-	/* NOTREACHED */
+	kbd_cmd(KBC_STSIND);	/* LED Command */
+	outb(KBOUTP,scroll | 2*num | 4*caps);
+	/*kbd_cmd(scroll | 2*num | 4*caps);*/
 }
 
 /*
-sgetc(noblock) : get a character from the keyboard. If noblock = 0 wait until
-a key is gotten.  Otherwise return a 0x100 (256).
-*/
-int sgetc(noblock)
+ *   sgetc(noblock):  get  characters  from  the  keyboard.  If
+ *   noblock  ==  0  wait  until a key is gotten. Otherwise return a
+ *    if no characters are present 0.
+ */
+char *sgetc(noblock)
 {
-	u_char dt; unsigned key;
+	u_char		dt;
+	unsigned	key;
+	static u_char	extended = 0;
+	static char	capchar[2];
+
+	/*
+	 *   First see if there is something in the keyboard port
+	 */
 loop:
-	/* First see if there is something in the keyboard port */
-	if (inb(KBSTAT)&1) dt = inb(KBDATA);
-	else { if (noblock) return (0x100); else goto loop; }
+	if (inb(KBSTATP) & KBS_DIB)
+		dt = inb(KBDATAP);
+	else
+	{
+		if (noblock)
+			return 0;
+		else
+			goto loop;
+	}
 
-	/* Check for cntl-alt-del */
-	if ((dt == 83)&&ctls&&alts) _exit();
+	if (dt == 0xe0)
+	{
+		extended = 1;
+		if (noblock)
+			return 0;
+		else
+			goto loop;
+	}
 
-	/* Check for make/break */
-	if (dt & 0x80) {
-		/* break */
-		dt = dt & 0x7f ;
-		switch (action[dt]) {
-		case SHF: shfts = 0; break;
-		case ALT: alts = 0; break;
-		case CTL: ctls = 0; break;
-		case FUNC:
-			/* Toggle debug flags */
-			key = unshift[dt];
-			if(__debug & (1<<key)) __debug &= ~(1<<key) ;
-			else __debug |= (1<<key) ;
-			break;
-		}
-	} else {
-		/* make */
-		dt = dt & 0x7f ;
-		switch (action[dt]) {
-		/* LOCKING KEYS */
-		case NUM: num ^= 1; update_led(); break;
-		case CPS: caps ^= 1; update_led(); break;
-		case SCROLL: scroll ^= 1; update_led(); break;
-		case STP: stp ^= 1; if(stp) goto loop; break;
+	/*
+	 *   Check for cntl-alt-del
+	 */
+	if ((dt == 83) && ctrl_down && alt_down)
+		cpu_reset();
 
-		/* NON-LOCKING KEYS */
-		case SHF: shfts = 1; break;
-		case ALT: alts = 1; break;
-		case CTL: ctls = 1; break;
-		case ASCII:
-			if (shfts) dt = shift[dt];
-			else if (ctls) dt = ctl[dt];
-			else dt = unshift[dt];
-			if (caps && (dt >= 'a' && dt <= 'z')) dt -= 'a' - 'A';
-			return(dt);
+#include "ddb.h"
+#if NDDB > 0
+	/*
+	 *   Check for cntl-alt-esc
+	 */
+	if ((dt == 1) && ctrl_down && alt_down)
+		Debugger();
+#endif
+
+	/*
+	 *   Check for make/break
+	 */
+	if (dt & 0x80)
+	{
+		/*
+		 *   break
+		 */
+		dt = dt & 0x7f;
+		switch (scan_codes[dt].type)
+		{
+			case SHIFT:
+				shift_down = 0;
+				break;
+			case ALT:
+				alt_down = 0;
+				break;
+			case CTL:
+				ctrl_down = 0;
+				break;
 		}
 	}
-	if (noblock) return (0x100); else goto loop;
+	else
+	{
+		/*
+		 *   Make
+		 */
+		dt = dt & 0x7f;
+		switch (scan_codes[dt].type)
+		{
+			/*
+			 *   Locking keys
+			 */
+			case NUM:
+				num ^= 1;
+				update_led();
+				break;
+			case CAPS:
+				caps ^= 1;
+				update_led();
+				break;
+			case SCROLL:
+				scroll ^= 1;
+				update_led();
+				break;
+
+			/*
+			 *   Non-locking keys
+			 */
+			case SHIFT:
+				shift_down = 1;
+				break;
+			case ALT:
+				alt_down = 0x80;
+				break;
+			case CTL:
+				ctrl_down = 1;
+				break;
+			case ASCII:
+			case NONE:
+			case FUNC:
+				if (shift_down)
+					more_chars = scan_codes[dt].shift;
+				else if (ctrl_down)
+					more_chars = scan_codes[dt].ctrl;
+				else
+					more_chars = scan_codes[dt].unshift;
+				/* XXX */
+				if (caps && more_chars[1] == 0
+					&& (more_chars[0] >= 'a'
+						&& more_chars[0] <= 'z')) {
+					capchar[0] = *more_chars - ('a' - 'A');
+					more_chars = capchar;
+				}
+				extended = 0;
+				return(more_chars);
+			case KP:
+				if (shift_down || ctrl_down || !num || extended)
+					more_chars = scan_codes[dt].shift;
+				else
+					more_chars = scan_codes[dt].unshift;
+				extended = 0;
+				return(more_chars);
+		}
+	}
+	extended = 0;
+	if (noblock)
+		return 0;
+	else
+		goto loop;
 }
 
 pg(p,q,r,s,t,u,v,w,x,y,z) char *p; {
@@ -798,36 +1389,36 @@ pg(p,q,r,s,t,u,v,w,x,y,z) char *p; {
 
 getchar()
 {
-	register char thechar;
-	register delay;
-	int x;
+	char	thechar;
+	register	delay;
+	int		x;
 
 	pcconsoftc.cs_flags |= CSF_POLLING;
-	x=splhigh();
-	sput('>',0x6);
+	x = splhigh();
+	sput('>', 1);
 	/*while (1) {*/
-		thechar = (char) sgetc(0);
+		thechar = *(sgetc(0));
 		pcconsoftc.cs_flags &= ~CSF_POLLING;
 		splx(x);
 		switch (thechar) {
 		    default: if (thechar >= ' ')
-			     	sput(thechar,0x6);
+			     	sput(thechar, 1);
 			     return(thechar);
 		    case cr:
-		    case lf: sput(cr,0x6);
-			     sput(lf,0x6);
+		    case lf: sput('\r', 1);
+		    		sput('\n', 1);
 			     return(lf);
 		    case bs:
 		    case del:
-			     sput(bs,0x6);
-			     sput(' ',0x6);
-			     sput(bs,0x6);
+			     sput('\b', 1);
+			     sput(' ', 1);
+			     sput('\b', 1);
 			     return(thechar);
-		    /*case cntlc:
-			     sput('^',0xe) ; sput('C',0xe) ; sput('\r',0xe) ; sput('\n',0xe) ;
-			     _exit(-2) ; */
+		    case cntlc:
+			     sput('^', 1) ; sput('C', 1) ; sput('\r', 1) ; sput('\n', 1) ;
+			     cpu_reset();
 		    case cntld:
-			     sput('^',0x6) ; sput('D',0x6) ; sput('\r',0x6) ; sput('\n',0x6) ;
+			     sput('^', 1) ; sput('D', 1) ; sput('\r', 1) ; sput('\n', 1) ;
 			     return(0);
 		}
 	/*}*/
@@ -857,7 +1448,7 @@ dprintf(flgs, fmt /*, va_alist */)
 		int x;
 		x = splhigh();
 		if (nrow%24 == 23) nrow = 0;
-		sgetc(0);
+		(void)sgetc(0);
 		splx(x);
 	}
 	}
@@ -865,3 +1456,10 @@ dprintf(flgs, fmt /*, va_alist */)
 }
 
 consinit() {}
+
+int pcmmap(dev_t dev, int offset, int nprot)
+{
+	if (offset > 0x20000)
+		return -1;
+	return i386_btop((0xa0000 + offset));
+}

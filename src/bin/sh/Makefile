@@ -13,11 +13,11 @@ CLEANFILES+=\
 	nodes.c nodes.h signames.c signames.h syntax.c syntax.h token.def
 
 .depend parser.o: token.def
-#token.def: mktokens
-#	sh ${.CURDIR}/mktokens
+token.def: mktokens
+	sh ${.CURDIR}/mktokens
 
-#builtins.h builtins.c: ${.CURDIR}/mkbuiltins ${.CURDIR}/builtins
-#	cd ${.CURDIR}; sh mkbuiltins
+builtins.h builtins.c: ${.CURDIR}/mkbuiltins ${.CURDIR}/builtins
+	cd ${.CURDIR}; sh mkbuiltins
 
 init.c: mkinit ${SRCS}
 	./mkinit '${CC} -c ${CFLAGS} init.c' ${.ALLSRC}

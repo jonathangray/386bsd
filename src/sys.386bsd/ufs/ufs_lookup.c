@@ -313,7 +313,6 @@ searchloop:
 				 */
 				ndp->ni_ufs.ufs_ino = ep->d_ino;
 				ndp->ni_ufs.ufs_reclen = ep->d_reclen;
-				brelse(bp);
 				goto found;
 			}
 		}
@@ -406,6 +405,8 @@ found:
 		dp->i_size = entryoffsetinblock + DIRSIZ(ep);
 		dp->i_flag |= IUPD|ICHG;
 	}
+
+	brelse(bp);
 
 	/*
 	 * Found component in pathname.

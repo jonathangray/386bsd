@@ -665,7 +665,7 @@ swap_pager_io(swp, m, flags)
 		--swap_pager_poip;
 #endif
 	rv = (bp->b_flags & B_ERROR) ? VM_PAGER_FAIL : VM_PAGER_OK;
-	bp->b_flags &= ~(B_BUSY|B_WANTED|B_PHYS|B_PAGET|B_UAREA|B_DIRTY);
+	bp->b_flags &= ~(B_BUSY|B_WANTED|B_PHYS|B_DIRTY);
 	bp->av_forw = bswlist.av_forw;
 	bswlist.av_forw = bp;
 	if (bp->b_vp)
@@ -887,7 +887,7 @@ printf("error %d blkno %d sz %d ", bp->b_error, bp->b_blkno, bp->b_bcount);
 		thread_wakeup((int)spc->spc_swp);
 	}
 		
-	bp->b_flags &= ~(B_BUSY|B_WANTED|B_PHYS|B_PAGET|B_UAREA|B_DIRTY);
+	bp->b_flags &= ~(B_BUSY|B_WANTED|B_PHYS|B_DIRTY);
 	bp->av_forw = bswlist.av_forw;
 	bswlist.av_forw = bp;
 	if (bp->b_vp)

@@ -44,6 +44,7 @@
 #include "file.h"
 #include "acct.h"
 #include "ktrace.h"
+#include "vm/vm.h"
 
 /* ARGSUSED */
 fork(p, uap, retval)

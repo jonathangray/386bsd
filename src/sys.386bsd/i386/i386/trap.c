@@ -65,6 +65,7 @@ static char rcsid[] = "$Header: /usr/bill/working/sys/i386/i386/RCS/trap.c,v 1.2
 
 struct	sysent sysent[];
 int	nsysent;
+int dostacklimits;
 unsigned rcr2();
 extern short cpl;
 
@@ -89,9 +90,22 @@ trap(frame)
 
 	frame.tf_eflags &= ~PSL_NT;	/* clear nested trap XXX */
 	type = frame.tf_trapno;
+#include "ddb.h"
+#if NDDB > 0
+	if (curpcb && curpcb->pcb_onfault) {
+		if (frame.tf_trapno == T_BPTFLT
+		    || frame.tf_trapno == T_TRCTRAP)
+			if (kdb_trap (type, 0, &frame))
+				return;
+	}
+#endif
 	
+/*pg("trap type %d code = %x eip = %x cs = %x eva = %x esp %x",
+			frame.tf_trapno, frame.tf_err, frame.tf_eip,
+			frame.tf_cs, rcr2(), frame.tf_esp);*/
 if(curpcb == 0 || curproc == 0) goto we_re_toast;
 	if (curpcb->pcb_onfault && frame.tf_trapno != 0xc) {
+copyfault:
 		frame.tf_eip = (int)curpcb->pcb_onfault;
 		return;
 	}
@@ -114,6 +128,10 @@ if(curpcb == 0 || curproc == 0) goto we_re_toast;
 		if (kdb_trap(&psl))
 			return;
 #endif
+#if NDDB > 0
+		if (kdb_trap (type, 0, &frame))
+			return;
+#endif
 
 		printf("trap type %d code = %x eip = %x cs = %x eflags = %x ",
 			frame.tf_trapno, frame.tf_err, frame.tf_eip,
@@ -127,7 +145,6 @@ if(curpcb == 0 || curproc == 0) goto we_re_toast;
 	case T_SEGNPFLT|T_USER:
 	case T_STKFLT|T_USER:
 	case T_PROTFLT|T_USER:		/* protection fault */
-copyfault:
 		ucode = code + BUS_SEGM_FAULT ;
 		i = SIGBUS;
 		break;
@@ -141,7 +158,6 @@ copyfault:
 		break;
 
 	case T_ASTFLT|T_USER:		/* Allow process switch */
-	case T_ASTFLT:
 		astoff();
 		if ((p->p_flag & SOWEUPC) && p->p_stats->p_prof.pr_scale) {
 			addupc(frame.tf_eip, &p->p_stats->p_prof, 1);
@@ -154,8 +170,9 @@ copyfault:
 		/* if a transparent fault (due to context switch "late") */
 		if (npxdna()) return;
 #endif
+		i = math_emulate(&frame);
+		if (i == 0) return;
 		ucode = FPE_FPU_NP_TRAP;
-		i = SIGFPE;
 		break;
 
 	case T_BOUND|T_USER:
@@ -216,13 +233,17 @@ copyfault:
 			goto we_re_toast;
 		}
 #endif
+
 		/*
 		 * XXX: rude hack to make stack limits "work"
 		 */
 		nss = 0;
-		if ((caddr_t)va >= vm->vm_maxsaddr && map != kernel_map) {
-			nss = clrnd(btoc(USRSTACK-(unsigned)va));
+		if ((caddr_t)va >= vm->vm_maxsaddr && map != kernel_map
+			&& dostacklimits) {
+			nss = clrnd(btoc((unsigned)vm->vm_maxsaddr
+				+ MAXSSIZ - (unsigned)va));
 			if (nss > btoc(p->p_rlimit[RLIMIT_STACK].rlim_cur)) {
+/*pg("trap rlimit %d, maxsaddr %x va %x ", nss, vm->vm_maxsaddr, va);*/
 				rv = KERN_FAILURE;
 				goto nogo;
 			}
@@ -267,11 +288,13 @@ nogo:
 		break;
 	    }
 
+#if NDDB == 0
 	case T_TRCTRAP:	 /* trace trap -- someone single stepping lcall's */
 		frame.tf_eflags &= ~PSL_T;
 
 			/* Q: how do we turn it on again? */
 		return;
+#endif
 	
 	case T_BPTFLT|T_USER:		/* bpt instruction fault */
 	case T_TRCTRAP|T_USER:		/* trace trap */
@@ -283,6 +306,12 @@ nogo:
 #if	NISA > 0
 	case T_NMI:
 	case T_NMI|T_USER:
+#if NDDB > 0
+		/* NMI can be hooked up to a pushbutton for debugging */
+		printf ("NMI ... going to debugger\n");
+		if (kdb_trap (type, 0, &frame))
+			return;
+#endif
 		/* machine/parity/power fail/"kitchen sink" faults */
 		if(isa_nmi(code) == 0) return;
 		else goto we_re_toast;
@@ -331,6 +360,21 @@ out:
 	}
 	curpri = p->p_pri;
 	curpcb->pcb_flags &= ~FM_TRAP;	/* used by sendsig */
+}
+
+/*
+ * Compensate for 386 brain damage (missing URKR)
+ */
+int trapwrite(unsigned addr) {
+	int rv;
+	vm_offset_t va;
+
+	va = trunc_page((vm_offset_t)addr);
+	if (va > VM_MAXUSER_ADDRESS) return(1);
+	rv = vm_fault(&curproc->p_vmspace->vm_map, va,
+		VM_PROT_READ | VM_PROT_WRITE, FALSE);
+	if (rv == KERN_SUCCESS) return(0);
+	else return(1);
 }
 
 /*
@@ -391,11 +435,13 @@ syscall(frame)
 #endif
 	rval[0] = 0;
 	rval[1] = frame.sf_edx;
+/*pg("%d. s %d\n", p->p_pid, code);*/
 	error = (*callp->sy_call)(p, args, rval);
 	if (error == ERESTART)
 		frame.sf_eip = opc;
 	else if (error != EJUSTRETURN) {
 		if (error) {
+/*pg("error %d", error);*/
 			frame.sf_eax = error;
 			frame.sf_eflags |= PSL_C;	/* carry bit */
 		} else {
@@ -452,5 +498,17 @@ done:
 #ifdef KTRACE
 	if (KTRPOINT(p, KTR_SYSRET))
 		ktrsysret(p->p_tracep, code, error, rval[0]);
+#endif
+#ifdef	DIAGNOSTICx
+{ extern int _udatasel, _ucodesel;
+	if (frame.sf_ss != _udatasel)
+		printf("ss %x call %d\n", frame.sf_ss, code);
+	if ((frame.sf_cs&0xffff) != _ucodesel)
+		printf("cs %x call %d\n", frame.sf_cs, code);
+	if (frame.sf_eip > VM_MAXUSER_ADDRESS) {
+		printf("eip %x call %d\n", frame.sf_eip, code);
+		frame.sf_eip = 0;
+	}
+}
 #endif
 }

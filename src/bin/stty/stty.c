@@ -129,6 +129,7 @@ args:	argc -= optind;
 			speed = atoi(*argv);
 			cfsetospeed(&i.t, speed);
 			cfsetispeed(&i.t, speed);
+			i.set = 1;
 			continue;
 		}
 

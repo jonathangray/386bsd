@@ -22,4 +22,4 @@ beforeinstall: ${HDRS}
 	cd ${.CURDIR}; install -c -o ${BINOWN} -g ${BINGRP} -m 444 ${HDRS} \
 	    ${DESTDIR}/usr/include/rpc
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

@@ -165,7 +165,7 @@ main(argc, argv)
 
 	read_kmem();
 	if (!dump_exists()) {
-		(void)fprintf(stderr, "savecore: no core dump\n");
+/*		(void)fprintf(stderr, "savecore: no core dump\n");*/
 		if (!force)
 			exit(0);
 	}
@@ -327,6 +327,7 @@ check_kmem()
 		log(LOG_ERR, "Can't fdopen dumpfd\n");
 		exit(1);
 	}
+
 	fseek(fp, (off_t)(dumplo+ok(dump_nl[X_VERSION].n_value)), L_SET);
 	fgets(core_vers, sizeof (core_vers), fp);
 	if (!eq(vers, core_vers) && system == 0) {
@@ -334,6 +335,7 @@ check_kmem()
 		log(LOG_WARNING, "\t%s\n", vers);
 		log(LOG_WARNING, "and\t%s\n", core_vers);
 	}
+
 	fseek(fp, (off_t)(dumplo + ok(dump_nl[X_PANICSTR].n_value)), L_SET);
 	fread((char *)&panicstr, sizeof (panicstr), 1, fp);
 	if (panicstr) {
@@ -415,7 +417,8 @@ read_number(fn)
 	return (atoi(lin));
 }
 
-#define	BUFSIZE		(256*1024)		/* 1/4 Mb */
+/*#define	BUFSIZE		(256*1024)		/* 1/4 Mb */
+#define	BUFSIZE		(8*1024)
 
 save_core()
 {
@@ -433,7 +436,7 @@ save_core()
 	}
 	bounds = read_number("bounds");
 	ifd = Open(system ? system : _PATH_UNIX, O_RDONLY);
-	(void)sprintf(cp, "vmunix.%d", bounds);
+	(void)sprintf(cp, "system.%d", bounds);
 	ofd = Create(path(cp), 0644);
 	while((n = Read(ifd, cp, BUFSIZE)) > 0)
 		Write(ofd, cp, n);
@@ -446,11 +449,11 @@ save_core()
 	}
 	Lseek(dumpfd, (off_t)(dumplo + ok(dump_nl[X_DUMPSIZE].n_value)), L_SET);
 	Read(dumpfd, (char *)&dumpsize, sizeof (dumpsize));
-	(void)sprintf(cp, "vmcore.%d", bounds);
+	(void)sprintf(cp, "ram.%d", bounds);
 	ofd = Create(path(cp), 0644);
 	Lseek(ifd, (off_t)dumplo, L_SET);
 	dumpsize *= NBPG;
-	log(LOG_NOTICE, "Saving %d bytes of image in vmcore.%d\n",
+	log(LOG_NOTICE, "Saving %d bytes of image in ram.%d\n",
 	    dumpsize, bounds);
 	while (dumpsize > 0) {
 		n = read(ifd, cp,
@@ -459,7 +462,7 @@ save_core()
 			if (n == 0)
 				log(LOG_WARNING,
 				    "WARNING: EOF on dump device; %s\n",
-				    "vmcore may be incomplete");
+				    "ram file may be incomplete");
 			else
 				Perror(LOG_ERR, "read from dumpdev: %m",
 				    "read");
@@ -471,7 +474,7 @@ save_core()
 			else
 				log(LOG_ERR, "short write: wrote %d of %d\n",
 				    ret, n);
-			log(LOG_WARNING, "WARNING: vmcore may be incomplete\n");
+			log(LOG_WARNING, "WARNING: ram file may be incomplete\n");
 			break;
 		}
 		dumpsize -= n;

@@ -371,6 +371,12 @@ c_fstype(arg)
     
 	new = palloc(N_FSTYPE, f_fstype);
 	switch(*arg) {
+	case 'i':
+		if (!strcmp(arg, "isofs")) {
+			new->flags = MOUNT_ISOFS;
+			return(new);
+		}
+		break;
 	case 'l':
 		if (!strcmp(arg, "local")) {
 			new->flags = MOUNT_NONE;
@@ -382,16 +388,14 @@ c_fstype(arg)
 			new->flags = MOUNT_MFS;
 			return(new);
 		}
+		if (!strcmp(arg, "msdos")) {
+			new->flags = MOUNT_MSDOS;
+			return(new);
+		}
 		break;
 	case 'n':
 		if (!strcmp(arg, "nfs")) {
 			new->flags = MOUNT_NFS;
-			return(new);
-		}
-		break;
-	case 'p':
-		if (!strcmp(arg, "pc")) {
-			new->flags = MOUNT_PC;
 			return(new);
 		}
 		break;

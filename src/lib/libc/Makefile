@@ -19,4 +19,4 @@ AINC=	-I${.CURDIR}/${MACHINE}
 .include "${.CURDIR}/string/Makefile.inc"
 .include "${.CURDIR}/sys/Makefile.inc"
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

@@ -10,4 +10,4 @@ MLINKS=	termcap.3 tgetent.3 termcap.3 tgetflag.3 termcap.3 tgetnum.3 \
 LINKS=	${LIBDIR}/libtermcap.a ${LIBDIR}/libtermlib.a \
 	${LIBDIR}/libtermcap_p.a ${LIBDIR}/libtermlib_p.a
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>

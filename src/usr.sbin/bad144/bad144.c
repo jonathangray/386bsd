@@ -66,7 +66,11 @@ static char sccsid[] = "@(#)bad144.c	5.19 (Berkeley) 4/11/91";
 #include <paths.h>
 
 #define RETRIES	10		/* number of retries on reading old sectors */
+#ifdef __386BSD__
+#define	RAWPART	"d"		/* disk partition containing badsector tables */
+#else
 #define	RAWPART	"c"		/* disk partition containing badsector tables */
+#endif
 
 int	fflag, add, copy, verbose, nflag;
 int	compare();
@@ -146,6 +150,7 @@ usage:
 	f = open(name, argc == 1? O_RDONLY : O_RDWR);
 	if (f < 0)
 		Perror(name);
+#ifdef was
 	if (read(f, label, sizeof(label)) < 0) 
 		Perror("read");
 	for (dp = (struct disklabel *)(label + LABELOFFSET);
@@ -154,7 +159,14 @@ usage:
 	    dp = (struct disklabel *)((char *)dp + 64))
 		if (dp->d_magic == DISKMAGIC && dp->d_magic2 == DISKMAGIC)
 			break;
-	if (dp->d_magic != DISKMAGIC || dp->d_magic2 != DISKMAGIC) {
+#else
+	/* obtain label and adjust to fit */
+	dp = &label;
+	if (ioctl(f, DIOCGDINFO, dp) < 0)
+		Perror("ioctl DIOCGDINFO");
+#endif
+	if (dp->d_magic != DISKMAGIC || dp->d_magic2 != DISKMAGIC
+		/* dkcksum(lp) != 0 */ ) {
 		fprintf(stderr, "Bad pack magic number (pack is unlabeled)\n");
 		exit(1);
 	}
@@ -163,6 +175,18 @@ usage:
 			dp->d_secsize);
 		exit(7);
 	}
+#ifdef __386BSD__
+	if (dp->d_type == DTYPE_SCSI) {
+		fprintf(stderr, "SCSI disks don't use bad144!\n");
+		exit(1);
+	}
+	/* are we inside a DOS partition? */
+	if (dp->d_partitions[0].p_offset) {
+		/* yes, rules change. assume bad tables at end of partition C,
+		   which maps all of DOS partition we are within -wfj */
+		size = dp->d_partitions[2].p_offset + dp->d_partitions[2].p_size;
+	} else
+#endif
 	size = dp->d_nsectors * dp->d_ntracks * dp->d_ncylinders; 
 	argc--;
 	argv++;
@@ -297,6 +321,14 @@ usage:
 		fprintf(stderr,
 	"Can't sync bad-sector file; reboot for changes to take effect\n");
 #endif
+	if ((dp->d_flags & D_BADSECT) == 0 && nflag == 0) {
+		dp->d_flags |= D_BADSECT;
+		if (ioctl(f, DIOCWDINFO, dp) < 0) {
+			perror("label");
+			fprintf(stderr, "Can't write disklabel to enable bad secctor handling by the drive\n");
+			exit(1);
+		}
+	}
 	exit(0);
 }
 

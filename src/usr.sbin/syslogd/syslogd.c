@@ -269,6 +269,7 @@ main(argc, argv)
 			logerror("syslog/udp: unknown service");
 			die(0);
 		}
+		bzero((char *)&sin, sizeof(sin));
 		sin.sin_family = AF_INET;
 		sin.sin_port = LogPort = sp->s_port;
 		if (bind(finet, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
@@ -421,7 +422,8 @@ printsys(msg)
 	int pri, flags;
 	char *lp;
 
-	(void) strcpy(line, "vmunix: ");
+	(void) strcpy(line, _PATH_UNIX);
+	(void) strcat(line, ": ");
 	lp = line + strlen(line);
 	for (p = msg; *p != '\0'; ) {
 		flags = SYNC_FILE | ADDDATE;	/* fsync file after write */

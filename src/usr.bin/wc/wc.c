@@ -169,11 +169,16 @@ cnt(file)
 			 * of inode.
 			 */
 			if (dochar) {
+				int ifmt;
+
 				if (fstat(fd, &sbuf)) {
 					perror(file);
 					exit(1);
 				}
-				if (sbuf.st_mode & (S_IFREG | S_IFLNK | S_IFDIR)) {
+
+				ifmt = sbuf.st_mode & S_IFMT;
+				if (ifmt == S_IFREG || ifmt == S_IFLNK
+					|| ifmt == S_IFDIR) {
 					printf(" %7ld", sbuf.st_size);
 					tcharct += sbuf.st_size;
 					close(fd);

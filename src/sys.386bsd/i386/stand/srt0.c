@@ -50,12 +50,15 @@
 	.globl	_exit
 	.globl	_bootdev
 	.globl	_cyloffset
+#define	NOP	inb $0x84,%al ; inb $0x84,%al
 
 #ifdef SMALL
 	/* where the disklabel goes if we have one */
 	.globl	_disklabel
 _disklabel:
 	.space 512
+	.globl _scsisn
+	.set _scsisn, RELOC+0x60
 #endif
 
 	.globl	entry
@@ -86,9 +89,8 @@ start:
 
 #ifdef REL
 	leal	4(%esp),%eax	/* ignore old pc */
-	movl	$ RELOC-4*4,%esp
-	/* copy down boot parameters */
-	movl	%esp,%ebx
+	movl	$ RELOC-3*4,%ebx
+	/* copy boot parameters */
 	pushl	$3*4
 	pushl	%ebx
 	pushl	%eax
@@ -112,7 +114,7 @@ start:
 	movl	$64*1024,%ebx
 	movl	$_end,%eax	# should be movl $_end-_edata but ...
 	subl	$_edata,%eax
-	addl	%ebx,%eax
+	#addl	%ebx,%eax
 	pushl	%eax
 	pushl	$_edata
 	call	_bzero
@@ -134,13 +136,9 @@ start:
 	pushl	%esp
 	call	_bzero
 #endif
-	/*movl	%esi,%esp*/
-
-	/*pushl	$0
-	popf*/
 
 	call	_kbdreset	/* resets keyboard and gatea20 brain damage */
-
+	movl	%esi,%esp
 	call	_main
 	jmp	1f
 
@@ -181,17 +179,15 @@ _exit:
 	.globl	_inb
 _inb:	movl	4(%esp),%edx
 	subl	%eax,%eax	# clr eax
-	jmp 7f ; nop ; 7: jmp 7f ; nop ; 7: ;
+	NOP
 	inb	%dx,%al
-	jmp 7f ; nop ; 7: jmp 7f ; nop ; 7: ;
 	ret
 
 	.globl	_outb
 _outb:	movl	4(%esp),%edx
+	NOP
 	movl	8(%esp),%eax
-	jmp 7f ; nop ; 7: jmp 7f ; nop ; 7: ;
 	outb	%al,%dx
-	jmp 7f ; nop ; 7: jmp 7f ; nop ; 7: ;
 	ret
 
 	.globl ___udivsi3
@@ -251,6 +247,7 @@ _insw:
 	movw	8(%esp),%dx
 	movl	12(%esp),%edi
 	movl	16(%esp),%ecx
+	NOP
 	cld
 	nop
 	.byte 0x66,0xf2,0x6d	# rep insw
@@ -266,16 +263,11 @@ _outsw:
 	movw	8(%esp),%dx
 	movl	12(%esp),%esi
 	movl	16(%esp),%ecx
+	NOP
 	cld
 	nop
 	.byte 0x66,0xf2,0x6f	# rep outsw
 	nop
 	movl	%esi,%eax
 	popl	%esi
-	ret
-
-	.globl _scream
-_scream: inb	$0x61,%al
-	orb	$3,%al
-	outb	%al, $0x61
 	ret

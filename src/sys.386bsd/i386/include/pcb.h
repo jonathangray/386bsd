@@ -60,11 +60,12 @@ struct pcb {
  * Software pcb (extension)
  */
 	int	pcb_flags;
-#define	FP_WASUSED	0x01	/* floating point has been used in this proc */
-#define	FP_NEEDSSAVE	0x02	/* needs save on next context switch */
-#define	FP_NEEDSRESTORE	0x04	/* need restore on next DNA fault */
+#define	FP_WASUSED	0x01	/* process has used fltng pnt hardware */
+#define	FP_NEEDSSAVE	0x02	/* ... that needs save on next context switch */
+#define	FP_NEEDSRESTORE	0x04	/* ... that needs restore on next DNA fault */
 #define	FP_USESEMC	0x08	/* process uses EMC memory-mapped mode */
 #define	FM_TRAP		0x10	/* process entered kernel on a trap frame */
+#define	FP_SOFTFP	0x20	/* process using software fltng pnt emulator */
 	short	pcb_iml;	/* interrupt mask level */
 	caddr_t	pcb_onfault;	/* copyin/out fault recovery */
 	long	pcb_sigc[8];	/* XXX signal code trampoline */

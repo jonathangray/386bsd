@@ -31,21 +31,22 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
+#if defined(LIBC_SCCS) && !defined(lint)
 static char sccsid[] = "@(#)crt0.c	5.7 (Berkeley) 7/3/91";
-#endif /* not lint */
+#endif /* LIBC_SCCS and not lint */
+
 
 /*
  *	C start up routine.
  *	Robert Henry, UCB, 20 Oct 81
  *
  *	We make the following (true) assumption:
- *	1) The only register variable that we can trust is ebp,
- *	which points to the base of the kernel calling frame.
+ *	1) The only register variable that we can trust is the frame pointer,
+ *	ebp, which points to the base of the kernel calling frame.
  */
 
-char **environ = (char **)0;
-static int fd;
+char	**environ = (char **)0;
+int	errno = 0;
 
 asm(".text");
 asm(".long 0xc000c000");
@@ -53,6 +54,7 @@ asm(".long 0xc000c000");
 extern	unsigned char	etext;
 extern	unsigned char	eprol asm ("eprol");
 extern			start() asm("start");
+extern			mcount() asm ("mcount");
 
 start()
 {
@@ -65,17 +67,17 @@ start()
 	/*
 	 *	ALL REGISTER VARIABLES!!!
 	 */
-	register struct kframe *kfp;	/* r10 */
+	register struct kframe *kfp;
 	register char **targv;
 	register char **argv;
-	extern int errno;
 	extern void _mcleanup();
 
 #ifdef lint
 	kfp = 0;
 	initcode = initcode = 0;
 #else not lint
-	asm("lea 4(%ebp),%ebx");	/* catch it quick */
+	/* just above the saved frame pointer */
+	asm ("lea 4(%%ebp), %0" : "=r" (kfp) );
 #endif not lint
 	for (argv = targv = &kfp->kargv[0]; *targv++; /* void */)
 		/* void */ ;
@@ -84,26 +86,10 @@ start()
 	environ = targv;
 asm("eprol:");
 
-#ifdef paranoid
-	/*
-	 * The standard I/O library assumes that file descriptors 0, 1, and 2
-	 * are open. If one of these descriptors is closed prior to the start 
-	 * of the process, I/O gets very confused. To avoid this problem, we
-	 * insure that the first three file descriptors are open before calling
-	 * main(). Normally this is undefined, as it adds two unnecessary
-	 * system calls.
-	 */
-	do	{
-		fd = open("/dev/null", 2);
-	} while (fd >= 0 && fd < 3);
-	close(fd);
-#endif paranoid
-
 #ifdef MCRT0
 	atexit(_mcleanup);
 	monstartup(&eprol, &etext);
 #endif MCRT0
-	errno = 0;
 	exit(main(kfp->kargc, argv, environ));
 }
 
@@ -117,6 +103,6 @@ moncontrol(val)
 {
 
 }
-asm(".globl mcount");
-asm("mcount: ret");
+
+mcount() { }
 #endif CRT0

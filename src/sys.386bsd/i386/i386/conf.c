@@ -60,6 +60,20 @@ int	wddump(),wdsize();
 #define	wdsize		NULL
 #endif
 
+#include "as.h"
+#if NAS > 0
+int	asopen(),asclose(),asstrategy(),asioctl();
+int	/*asdump(),*/assize();
+#define	asdump		enxio
+#else
+#define	asopen		enxio
+#define	asclose		enxio
+#define	asstrategy	enxio
+#define	asioctl		enxio
+#define	asdump		enxio
+#define	assize		NULL
+#endif
+
 #include "wt.h"
 #if NWT > 0
 int	wtopen(),wtclose(),wtstrategy(),wtioctl();
@@ -99,13 +113,15 @@ struct bdevsw	bdevsw[] =
 	{ Fdopen,	fdclose,	fdstrategy,	fdioctl,	/*2*/
 	  fddump,	fdsize,		NULL },
 	{ wtopen,	wtclose,	wtstrategy,	wtioctl,	/*3*/
-	  wtdump,	wtsize,		B_TAPE }
+	  wtdump,	wtsize,		B_TAPE },
+	{ asopen,	asclose,	asstrategy,	asioctl,	/*4*/
+	  asdump,	assize,		NULL },
 };
 int	nblkdev = sizeof (bdevsw) / sizeof (bdevsw[0]);
 
 int	cnopen(),cnclose(),cnread(),cnwrite(),cnioctl(),cnselect();
 
-int	pcopen(),pcclose(),pcread(),pcwrite(),pcioctl();
+int	pcopen(),pcclose(),pcread(),pcwrite(),pcioctl(),pcmmap();
 extern	struct tty pccons;
 
 int	cttyopen(), cttyread(), cttywrite(), cttyioctl(), cttyselect();
@@ -194,7 +210,10 @@ struct cdevsw	cdevsw[] =
 	  seltrue,	enodev,		enodev },
 	{ pcopen,	pcclose,	pcread,		pcwrite,	/*C*/
 	  pcioctl,	nullop,		nullop,		&pccons,
-	  ttselect,	enodev,		NULL },
+	  ttselect,	pcmmap,		NULL },
+	{ asopen,	asclose,	rawread,	rawwrite,	/*D*/
+	  asioctl,	enodev,		nullop,		NULL,
+	  seltrue,	enodev,		asstrategy },
 };
 int	nchrdev = sizeof (cdevsw) / sizeof (cdevsw[0]);
 

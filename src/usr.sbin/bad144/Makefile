@@ -2,6 +2,6 @@
 
 PROG=	bad144
 MAN8=	bad144.0
-MANSUBDIR=/vax
+MANSUBDIR=/i386
 
 .include <bsd.prog.mk>

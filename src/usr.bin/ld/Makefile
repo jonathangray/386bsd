@@ -3,5 +3,6 @@
 PROG=	ld
 SRCS=	ld.c cplus-dem.c
 NOMAN=	noman
+LINKS=	${BINDIR}/ld ${BINDIR}/../libexec/ld++
 
 .include <bsd.prog.mk>

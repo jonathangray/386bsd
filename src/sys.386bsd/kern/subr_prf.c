@@ -112,6 +112,12 @@ panic(msg)
 		splx(s);
 	}
 #endif
+#include "ddb.h"
+#if NDDB > 0
+	Debugger ();
+#else
+/* pg("press key to boot/dump");*/
+#endif
 	boot(bootopt);
 }
 

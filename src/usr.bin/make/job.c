@@ -106,6 +106,7 @@ static char sccsid[] = "@(#)job.c	5.15 (Berkeley) 3/1/91";
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include "job.h"
 #include "pathnames.h"
 
@@ -435,6 +436,8 @@ JobPrintCommand (cmd, job)
 	}
 	cmd++;
     }
+
+    while (isspace(*cmd)) cmd++;
 
     if (shutUp) {
 	if (! (job->flags & JOB_SILENT) && !noSpecials &&

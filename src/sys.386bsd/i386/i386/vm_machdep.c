@@ -149,6 +149,7 @@ cpu_exit(p)
 	kmem_free(kernel_map, (vm_offset_t)p->p_addr, ctob(UPAGES));
 
 	p->p_addr = (struct user *) &nullpcb;
+	splclock();
 	swtch();
 	/* NOTREACHED */
 }
@@ -160,6 +161,7 @@ cpu_exit(p)
 	/* free coprocessor (if we have it) */
 	if( p == npxproc) npxproc =0;
 
+	splclock();
 	swtch();
 }
 
@@ -385,4 +387,17 @@ vunmapbuf(bp)
 	kmem_free_wakeup(phys_map, kva, ctob(npf));
 	bp->b_un.b_addr = bp->b_saveaddr;
 	bp->b_saveaddr = NULL;
+}
+
+/*
+ * Force reset the processor by invalidating the entire address space!
+ */
+cpu_reset() {
+
+	/* force a shutdown by unmapping entire address space ! */
+	bzero((caddr_t) PTD, NBPG);
+
+	/* "good night, sweet prince .... <THUNK!>" */
+	tlbflush(); 
+	/* NOTREACHED */
 }

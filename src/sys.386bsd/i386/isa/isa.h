@@ -43,6 +43,9 @@
 #ifndef LOCORE
 unsigned char inb(), rtcin();
 void outb();
+extern unsigned int atdevbase;	/* offset in virtual memory of ISA io mem */
+void sysbeep(int,int);
+unsigned kbd_8042cmd(int);
 #endif
 
 

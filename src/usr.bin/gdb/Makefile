@@ -26,14 +26,13 @@ $(OBJS):	param.h
 #
 # Generate the constructor
 #
-#init.c:		$(CONFIGSRCS) $(GDBSRCS) $(READLINESRCS)
-#	-((cd $(.CURDIR)/config; \
-#		egrep -h '^_initialize_[^ ]* *\(\)' $(CONFIGSRCS)); \
-#	  (cd $(.CURDIR); egrep -h '^_initialize_[^ ]* *\(\)' $(GDBSRCS)); \
-#	  (cd $(.CURDIR)/readline; \
-#		egrep -h '^_initialize_[^ ]* *\(\)' $(READLINESRCS))) | \
-#	(echo 'void initialize_all_files () {'; sed -e 's/$$/;/'; echo '}') \
-#		> init.c
+init.c:		$(CONFIGSRCS) $(GDBSRCS) $(READLINESRCS)
+	-((cd $(.CURDIR)/config; \
+		egrep -h '^_initialize_[^ ]* *\(\)' $(CONFIGSRCS)); \
+	  (cd $(.CURDIR); egrep -h '^_initialize_[^ ]* *\(\)' $(GDBSRCS)); \
+	  (cd $(.CURDIR)/readline; \
+		egrep -h '^_initialize_[^ ]* *\(\)' $(READLINESRCS))) | \
+	(echo 'void initialize_all_files () {'; sed -e 's/$$/;/'; echo '}') \
+		> init.c
 
-#CLEANFILES+=	init.c param.h
-CLEANFILES+=	param.h
+CLEANFILES+=	init.c param.h

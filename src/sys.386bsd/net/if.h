@@ -131,6 +131,9 @@ struct ifnet {
 #define	IFF_ALLMULTI	0x200		/* receive all multicast packets */
 #define	IFF_OACTIVE	0x400		/* transmission in progress */
 #define	IFF_SIMPLEX	0x800		/* can't hear own transmissions */
+#define	IFF_LLC0	0x1000		/* interface driver control/status */
+#define	IFF_LLC1	0x2000		/* interface driver control/status */
+#define	IFF_LLC2	0x4000		/* interface driver control/status */
 
 /* flags set internally only: */
 #define	IFF_CANTCHANGE \

@@ -43,6 +43,7 @@
 #include "mount.h"
 #include "buf.h"
 #include "file.h"
+#include "dkbad.h"	/* XXX */
 #include "disklabel.h"
 #include "ioctl.h"
 #include "errno.h"

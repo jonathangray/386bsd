@@ -95,7 +95,6 @@ reswitch:	switch (ch = *fmt++) {
 		case 'l':
 			lflag = 1;
 			goto reswitch;
-#ifdef notdef
 		case 'b':
 			ul = va_arg(ap, int);
 			p = va_arg(ap, char *);
@@ -116,7 +115,6 @@ reswitch:	switch (ch = *fmt++) {
 			if (set)
 				putchar('>');
 			break;
-#endif
 		case 'c':
 			ch = va_arg(ap, int);
 				putchar(ch & 0x7f);

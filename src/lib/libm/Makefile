@@ -47,7 +47,7 @@ depend: .depend
 .depend: ${SRCS}
 	mkdep ${CFLAGS:M-[ID]*} ${.ALLSRC:M*.c}
 
-.include <386bsd.lib.mk>
+.include <bsd.lib.mk>
 
 .s.o:
 	${AS} -o ${.TARGET} ${.IMPSRC}

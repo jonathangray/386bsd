@@ -479,12 +479,13 @@ ttioctl(tp, com, data, flag)
 					ttwakeup(tp);
 				}
 				else {
-					struct ringb tb;
+					/*struct ringb tb;*/
 
 					catb(&tp->t_raw, &tp->t_can);
-					tb = tp->t_raw;
+					catb(&tp->t_can, &tp->t_raw);
+					/*tb = tp->t_raw;
 					tp->t_raw = tp->t_can;
-					tp->t_can = tb;
+					tp->t_can = tb;*/
 				}
 		}
 		tp->t_iflag = t->c_iflag;
@@ -592,9 +593,10 @@ ttnread(tp)
 	return (nread);
 }
 
-ttselect(dev, rw)
+ttselect(dev, rw, p)
 	dev_t dev;
 	int rw;
+	struct proc *p;
 {
 	register struct tty *tp = &cdevsw[major(dev)].d_ttys[minor(dev)];
 	int nread;
@@ -610,7 +612,7 @@ ttselect(dev, rw)
 		if (tp->t_rsel && tp->t_rsel->p_wchan == (caddr_t)&selwait)
 			tp->t_state |= TS_RCOLL;
 		else
-			tp->t_rsel = curproc;
+			tp->t_rsel = p;
 		break;
 
 	case FWRITE:
@@ -619,7 +621,7 @@ ttselect(dev, rw)
 		if (tp->t_wsel && tp->t_wsel->p_wchan == (caddr_t)&selwait)
 			tp->t_state |= TS_WCOLL;
 		else
-			tp->t_wsel = curproc;
+			tp->t_wsel = p;
 		break;
 	}
 	splx(s);
@@ -752,15 +754,18 @@ nullmodem(tp, flag)
 ttypend(tp)
 	register struct tty *tp;
 {
-	struct ringb tb;
 	register c;
+	char *hd, *tl;
 
 	tp->t_lflag &= ~PENDIN;
 	tp->t_state |= TS_TYPEN;
-	tb = tp->t_raw;
-	tp->t_raw.rb_hd = tp->t_raw.rb_tl = tp->t_raw.rb_buf;
-	while ((c = getc(&tb)) >= 0)
-		ttyinput(c, tp);
+	hd = tp->t_raw.rb_hd;
+	tl = tp->t_raw.rb_tl;
+	flushq(&tp->t_raw);
+	while (hd != tl) {
+		ttyinput(*hd, tp);
+		hd = RB_SUCC(&tp->t_raw, hd);
+	}
 	tp->t_state &= ~TS_TYPEN;
 }
 
@@ -1312,11 +1317,14 @@ ttycheckoutq(tp, wait)
 
 	hiwat = tp->t_hiwat;
 	s = spltty();
-	oldsig = curproc->p_sig;
+	if (curproc)
+		oldsig = curproc->p_sig;
+	else
+		oldsig = 0;
 	if (RB_LEN(&tp->t_out) > hiwat + 200)
 		while (RB_LEN(&tp->t_out) > hiwat) {
 			ttstart(tp);
-			if (wait == 0 || curproc->p_sig != oldsig) {
+			if (wait == 0 || (curproc && curproc->p_sig != oldsig)) {
 				splx(s);
 				return (0);
 			}
@@ -1455,13 +1463,25 @@ loop:
 			tp->t_rocount = 0;
 #ifdef was
 			i = b_to_q(cp, ce, &tp->t_outq);
-#else
-			i = min (ce, RB_CONTIGPUT(&tp->t_out));
-			bcopy(cp, tp->t_out.rb_tl, i);
-			tp->t_out.rb_tl = RB_ROLLOVER(&tp->t_out, tp->t_out.rb_tl+i);
-			i = ce - i;
-#endif
 			ce -= i;
+#else
+			i = ce;
+			ce = min (ce, RB_CONTIGPUT(&tp->t_out));
+			bcopy(cp, tp->t_out.rb_tl, ce);
+			tp->t_out.rb_tl = RB_ROLLOVER(&tp->t_out,
+				tp->t_out.rb_tl + ce);
+			i -= ce;
+			if (i > 0) {
+				int ii;
+
+				ii = min (i, RB_CONTIGPUT(&tp->t_out));
+				bcopy(cp + ce, tp->t_out.rb_tl, ii);
+				tp->t_out.rb_tl = RB_ROLLOVER(&tp->t_out,
+					tp->t_out.rb_tl + ii);
+				i -= ii;
+				ce += ii;
+			}
+#endif
 			tp->t_col += ce;
 			cp += ce, cc -= ce, tk_nout += ce;
 			tp->t_outcc += ce;
@@ -1567,8 +1587,8 @@ ttyrub(c, tp)
 			tp->t_lflag |= FLUSHO;
 			tp->t_col = tp->t_rocol;
 			cp = tp->t_raw.rb_hd;
-			for (c = nextc(&tp->t_raw, &cp); c ;
-				c = nextc(&tp->t_raw, cp))
+			for (c = nextc(&cp, &tp->t_raw); c ;
+				c = nextc(&cp, &tp->t_raw))
 				ttyecho(c, tp);
 			tp->t_lflag &= ~FLUSHO;
 			tp->t_state &= ~TS_CNTTB;
@@ -1631,10 +1651,10 @@ ttyretype(tp)
 
 	s = spltty();
 	cp = tp->t_can.rb_hd;
-	for (c = nextc(&tp->t_can, &cp); c ; c = nextc(&tp->t_can, cp))
+	for (c = nextc(&cp, &tp->t_can); c ; c = nextc(&cp, &tp->t_can))
 		ttyecho(c, tp);
 	cp = tp->t_raw.rb_hd;
-	for (c = nextc(&tp->t_raw, &cp); c ; c = nextc(&tp->t_raw, cp))
+	for (c = nextc(&cp, &tp->t_raw); c ; c = nextc(&cp, &tp->t_raw))
 		ttyecho(c, tp);
 	tp->t_state &= ~TS_ERASE;
 	splx(s);

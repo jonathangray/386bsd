@@ -557,14 +557,14 @@ ptyioctl(dev, cmd, data, flag)
 		if (*(int *)data) {
 			if (pti->pt_flags & PF_PKT) {
 				pti->pt_send |= TIOCPKT_IOCTL;
-				ptcwakeup(tp);
+				ptcwakeup(tp, FREAD);
 			}
 			tp->t_lflag |= EXTPROC;
 		} else {
 			if ((tp->t_state & EXTPROC) &&
 			    (pti->pt_flags & PF_PKT)) {
 				pti->pt_send |= TIOCPKT_IOCTL;
-				ptcwakeup(tp);
+				ptcwakeup(tp, FREAD);
 			}
 			tp->t_lflag &= ~EXTPROC;
 		}

@@ -37,13 +37,15 @@
  *
  * PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
  * --------------------         -----   ----------------------
- * CURRENT PATCH LEVEL:         4       00078
+ * CURRENT PATCH LEVEL:         5       00083
  * --------------------         -----   ----------------------
  *
  * 15 Aug 92	Pace Willisson		Patches for X server
  * 21 Aug 92    Frank Maclachlan        Fixed back-scroll system crash
  * 28 Nov 1992	Terry Lee		Fixed LED's in X mode
  * 09 Feb 1993	Rich Murphey		Added 'BELL' mode in X
+ * 09 Feb 1993	Scotty ?		Attemped gate A20 fix
+ * 		Frank MacLachlan	CROCK for "hang after copyright" bug
  */
 static char rcsid[] = "$Header: /usr/bill/working/sys/i386/isa/RCS/pccons.c,v 1.2 92/01/21 14:35:28 william Exp $";
 
@@ -183,21 +185,27 @@ struct isa_device *dev;
 	int again = 0;
 
 	/* Enable interrupts and keyboard controller */
-	kbc_8042cmd(K_LDCMDBYTE);
-	outb(KBOUTP, CMDBYTE);
+      while (inb(KBSTATP)&KBS_IBF); outb(KBSTATP,K_LDCMDBYTE);
+      while (inb(KBSTATP)&KBS_IBF); outb(KBDATAP,CMDBYTE);
 
 	/* Start keyboard stuff RESET */
-	kbd_cmd(KBC_RESET);
-	while((c = inb(KBDATAP)) != KBR_ACK) {
+#ifdef KB_HACK
+	DELAY(1000);				/* 11 Sep 92 : !!CROCK!!*/
+#endif /* KB_HACK */
+      while((c = kbd_cmd(KBC_RESET)) != KBR_ACK) {
 		if ((c == KBR_RESEND) ||  (c == KBR_OVERRUN)) {
 			if(!again)printf("KEYBOARD disconnected: RECONNECT \n");
-			kbd_cmd(KBC_RESET);
+#ifdef KB_HACK
+			DELAY(1000);		/* 11 Sep 92 : !!CROCK!!*/
+#endif /* KB_HACK */
 			again = 1;
 		}
 	}
 
 	/* pick up keyboard reset return code */
-	while((c = inb(KBDATAP)) != KBR_RSTDONE);
+      while (inb(KBSTATP)&KBS_IBF);
+      (void) inb(KBDATAP);
+
 	return 1;
 }
 

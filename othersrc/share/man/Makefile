@@ -1,4 +1,11 @@
 #	@(#)Makefile	5.9 (Berkeley) 7/1/91
+#
+# PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
+# --------------------         -----   ----------------------
+# CURRENT PATCH LEVEL:         1       00504
+# --------------------         -----   ----------------------
+#
+# 05 Aug 92	James Jegers		Fix whatis.db file format
 
 SUBDIR=	man1 man3 man4 man5 man7 man8
 
@@ -11,7 +18,7 @@ afterinstall:
 makedb:
 	for file in `find /usr/share/man -type f -name '*.0' -print`; do \
 		sed -n -f /usr/share/man/makewhatis.sed $$file; \
-	done | sort -u > whatis.db
+	done | col -b | sort -u > whatis.db
 	install -o ${BINOWN} -g ${BINGRP} -m 444 whatis.db \
 	    ${DESTDIR}/usr/share/man
 

@@ -2,12 +2,14 @@
 #
 # PATCHES MAGIC                LEVEL   PATCH THAT GOT US HERE
 # --------------------         -----   ----------------------
-# CURRENT PATCH LEVEL:         1       00161
+# CURRENT PATCH LEVEL:         2       90001
 # --------------------         -----   ----------------------
 #
 # 02 Jun 93	Rodney W. Grimes	Add misc
+# 02 Jun 93	Rodney W. Grimes	Add dict and doc
 
-# Missing:  ms dict doc
+# Missing:  ms
+# Broken: doc
 
 SUBDIR=	dict man me misc mk skel tabset termcap tmac zoneinfo
 
